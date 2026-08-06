@@ -1,10 +1,13 @@
-// HomeScreen.jsx
 import React, { useState } from "react";
 import "../App.css";
 import AvatarChanger from "../components/AvatarChanger";
 import Footer from "../components/Footer";
 import { createAvatar } from '@dicebear/core';
-import { openPeeps, adventurer, avataaars, bigEars, bigSmile, bottts, croodles, funEmoji, lorelei, loreleiNeutral, micah, miniavs, notionists, personas } from '@dicebear/collection';
+import { 
+  openPeeps, adventurer, avataaars, bigEars, bigSmile, 
+  bottts, croodles, funEmoji, lorelei, loreleiNeutral, micah, 
+  miniavs, notionists, personas 
+} from '@dicebear/collection';
 import { useNavigate } from 'react-router-dom';
 
 const HomeScreen = () => {
@@ -48,18 +51,21 @@ const HomeScreen = () => {
 
   const handlePlayButtonClick = () => {
     if(!username || !avatar || !language){
-      console.log("please fill in all the details")
+      alert("Vui lòng nhập tên người chơi!");
       return;
     }
-    const userData = {
-      username,
-      language,
-      avatar,
-      roomCode
-    };
-    console.log("User Data:", userData);
-    localStorage.setItem("username", username)
-    navigate('/play', { state: { username, avatar } });
+    
+    localStorage.setItem("username", username);
+
+    // ✅ ĐÃ SỬA: Truyền đầy đủ thông tin bao gồm cả roomCode sang PlayScreen
+    navigate('/play', { 
+      state: { 
+        username, 
+        avatar, 
+        language, 
+        roomCode 
+      } 
+    });
   };
 
   return (

@@ -1,22 +1,23 @@
-import React, { useEffect, useState, useRef, useTransition } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { io } from "socket.io-client";
 import { Buffer } from "buffer";
 import PlayerCard from "../components/PlayerCard";
 import WordBar from "../components/WordBar";
-import { wordsArray, getWordsArrayLength } from "../components/Words";
 import { useNavigate, useLocation } from "react-router-dom";
 
 function PlayScreen() {
   const canvasRef = useRef(null);
+  const [maxRounds, setMaxRounds] = useState(3);
+  const [customWordsInput, setCustomWordsInput] = useState("");
+  const currentRoomCodeRef = useRef("");
   const [isPainting, setIsPainting] = useState(false);
   const [mousePosition, setMousePosition] = useState(undefined);
-  const [color, setColor] = useState("#000000"); // Default color is black
+  const [color, setColor] = useState("#000000");
   const [startPoint, setStartPoint] = useState(null);
-  const [lines, setLines] = useState([]); // Array to store drawn lines
-  const [straightLineMode, setStraightLineMode] = useState(false); // Straight line drawing mode
-  const [radius, setRadius] = useState(5); // Default radius is 5
-  const [isEraser, setIsEraser] = useState(false); // Default is drawing mode
-  const [context, setContext] = useState(null);
+  const [lines, setLines] = useState([]);
+  const [straightLineMode, setStraightLineMode] = useState(false);
+  const [radius, setRadius] = useState(5);
+  const [isEraser, setIsEraser] = useState(false);
   const [inputMessage, setInputMessage] = useState("");
   const [allChats, setAllChats] = useState([]);
   const [allPlayers, setAllPlayer] = useState([]);
@@ -25,312 +26,222 @@ function PlayScreen() {
   const [gameStarted, setgameStarted] = useState(false);
   const [playerDrawing, setPlayerDrawing] = useState(null);
   const [showWords, setShowWords] = useState(false);
-  const [words, setWords] = useState(["car", "bike", "cycle"]);
+  const [words, setWords] = useState([]);
   const [selectedWord, setSelectedWord] = useState(null);
   const [showClock, setShowClock] = useState(false);
   const [wordLen, setWordLen] = useState(0);
   const [guessedWord, setGuessedWord] = useState(false);
-  const navigate = useNavigate()
-  const location = useLocation()
+  const [currentRoomCode, setCurrentRoomCode] = useState("");
+  const [hostId, setHostId] = useState("");
+  const [leaderboardData, setLeaderboardData] = useState(null);
+  const navigate = useNavigate();
+  const location = useLocation();
   const userDataRecieved = location.state || {};
-  const ENDPOINT = "https://skribblay-you.onrender.com/";
-  const ENDPOINT_LOCAL = "http://localhost:3001/";
+
+  // ✅ ĐÃ ÉP CỨNG URL BACKEND THẲNG VÀO CODE (Không sợ lỗi process.env nữa)
+  const BACKEND_URL = "https://skribbl-game-bjc3gwb7dygyg2e2.japaneast-01.azurewebsites.net";
+
+  // 1. Khởi tạo Socket
   useEffect(() => {
-    console.log("user Data revcievd", userDataRecieved)
-    let us = localStorage.getItem("username")
-    if(!us || !userDataRecieved.username || !userDataRecieved.avatar){
-      navigate("/")
+    let us = localStorage.getItem("username");
+    if (!us || !userDataRecieved.username || !userDataRecieved.avatar) {
+      navigate("/");
       return;
     }
-    const newSocket = io.connect(process.env.REACT_APP_NODE_ENV === "production"
-    ? ENDPOINT
-    : ENDPOINT_LOCAL, );
-    // console.log(newSocket);
+
+    const newSocket = io.connect(BACKEND_URL, {
+      transports: ["polling", "websocket"],
+    });
     setSocket(newSocket);
-    // newSocket.emit("player-joined",newSocket.id)
 
-    window.onbeforeunload=()=>{
-      localStorage.removeItem("username");
+    return () => {
+      if (newSocket) newSocket.disconnect();
     };
-    return()=>{
-      if(newSocket){
-      newSocket.disconnect();
+  }, []);
+
+  // 2. Cài đặt các Event Listeners
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleRoomAssigned = (code) => {
+      setCurrentRoomCode(code);
+      currentRoomCodeRef.current = code;
+    };
+    
+    const handleUpdatedPlayers = (data) => {
+      if (data.players) {
+        setAllPlayer(data.players);
+        setHostId(data.hostId);
+      } else {
+        setAllPlayer(data);
       }
-      localStorage.removeItem("username")
-    }
-  }, []);
+    };
 
-  useEffect(() => {
-    if (socket) {
-      socket.on("updated-players", (updatedplayers) => {
-        console.log("updated Players", updatedplayers);
-        setAllPlayer(updatedplayers);
+    const handleSendUserData = () => {
+      const roomCodeFromHome =
+        currentRoomCodeRef.current ||
+        userDataRecieved.roomCode ||
+        userDataRecieved.room ||
+        userDataRecieved.code ||
+        userDataRecieved.roomId ||
+        "";
+
+      socket.emit("recieve-user-data", {
+        username: userDataRecieved.username,
+        avatar: userDataRecieved.avatar,
+        roomCode: roomCodeFromHome,
       });
-    }
-  }, [socket]);
+    };
 
-  useEffect(()=>{
-    if(socket){
-      socket.on("send-user-data",()=>{
-        console.log("sending user data")
-        let userdata= {
-          username: userDataRecieved.username,
-          avatar: userDataRecieved.avatar
+    const handleReceiving = async (data) => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext("2d");
+
+      const base64String = data.split(",")[1];
+      const buffer = Buffer.from(base64String, "base64");
+      const byteArray = new Uint8Array(buffer);
+      const blob = new Blob([byteArray], { type: "image/png" });
+      const imageUrl = URL.createObjectURL(blob);
+
+      const img = new Image();
+      img.onload = () => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0);
+      };
+      img.src = imageUrl;
+    };
+
+    const handleGameStart = () => setgameStarted(true);
+    const handleGameAlreadyStarted = () => setgameStarted(true);
+    const handleGameStop = () => {
+      setgameStarted(false);
+      setShowClock(false);
+      setCurrentUserDrawing(false);
+      setPlayerDrawing(null);
+    };
+
+    const handleStartTurn = (player) => {
+      setGuessedWord(false);
+      clearCanvasAfterTurn();
+      setPlayerDrawing(player);
+      setShowWords(false);
+      setCurrentUserDrawing(false);
+    };
+
+    const handleReceiveWords = (serverWords) => {
+      setWords(serverWords);
+      setShowWords(true);
+    };
+
+    const handleWordLen = (wl) => setWordLen(wl);
+
+    const handleStartDraw = (player) => {
+      setShowWords(false);
+      setShowClock(true);
+      clearCanvasAfterTurn();
+      const isMeDrawing = Boolean(player && socket && player.id === socket.id);
+      setCurrentUserDrawing(isMeDrawing);
+    };
+
+    const handleEndTurn = (player) => {
+      setGuessedWord(false);
+      setPlayerDrawing(null);
+      setShowClock(false);
+      setSelectedWord(null);
+      setCurrentUserDrawing(false);
+    };
+
+    const handleRecieveChat = ({ msg, player, rightGuess, players }) => {
+      setAllPlayer(players);
+      if (rightGuess) {
+        if (player.id === socket.id) {
+          setGuessedWord(true);
+          setAllChats((prev) => [
+            { sender: "you", message: `you guessed the right word! (${msg})`, rightGuess },
+            ...prev,
+          ]);
+        } else {
+          setAllChats((prev) => [
+            { sender: player.name, message: `${player.name} guessed the word right!`, rightGuess },
+            ...prev,
+          ]);
         }
-        socket.emit("recieve-user-data",userdata)
-      })
-    }
+      } else {
+        setAllChats((prev) => [
+          { sender: player.id === socket.id ? "you" : player.name, message: msg, rightGuess },
+          ...prev,
+        ]);
+      }
+    };
 
-  },[socket])
+    const handleGameEndedLeaderboard = (finalPlayers) => {
+      const sortedPlayers = [...finalPlayers].sort((a, b) => b.points - a.points);
+      setLeaderboardData(sortedPlayers);
+      setgameStarted(false);
+    };
 
-  useEffect(() => {
-    if (socket) {
-      //  socket.on("drawing", ({ x0, y0, x1, y1, color })=>{
-      //   // drawLine(context, x0, y0, x1, y1, color, false);
-      //  })
-      socket.on("receiving", async (data) => {
-        //   console.log(data)
-        // console.log("data recieved in frontend")
+    socket.on("room-assigned", handleRoomAssigned);
+    socket.on("updated-players", handleUpdatedPlayers);
+    socket.on("send-user-data", handleSendUserData);
+    socket.on("receiving", handleReceiving);
+    socket.on("game-start", handleGameStart);
+    socket.on("game-already-started", handleGameAlreadyStarted);
+    socket.on("game-stop", handleGameStop);
+    socket.on("start-turn", handleStartTurn);
+    socket.on("receive-words", handleReceiveWords);
+    socket.on("word-len", handleWordLen);
+    socket.on("start-draw", handleStartDraw);
+    socket.on("end-turn", handleEndTurn);
+    socket.on("recieve-chat", handleRecieveChat);
+    socket.on("game-ended-leaderboard", handleGameEndedLeaderboard);
+    socket.on("close-leaderboard", () => {
+      setLeaderboardData(null);
+    });
 
-        //   const offsetX=data.x
-        //   const offsetY=data.y
-
-        // await context.lineTo(offsetX, offsetY);
-        // await context.stroke();
-
-        // await context.beginPath();
-        // await context.arc(offsetX, offsetY,5,0,Math.PI*2)
-        // await context.fill()
-        // // context.stroke()
-        // await context.beginPath();
-        // await context.moveTo(offsetX, offsetY)
-        // await context.stroke()
-        // await context.beginPath()
-
-        const base64String = data.split(",")[1];
-        const buffer = Buffer.from(base64String, "base64");
-        const byteArray = new Uint8Array(buffer);
-        const blob = new Blob([byteArray], { type: "image/png" });
-        const imageUrl = URL.createObjectURL(blob);
-
-        const img = new Image();
-        img.onload = () => {
-          // if(context){
-          context.clearRect(
-            0,
-            0,
-            canvasRef.current.width,
-            canvasRef.current.height
-          );
-          context.drawImage(img, 0, 0);
-          // }
-        };
-        img.src = imageUrl;
-      });
-    }
-    //  return()=>{
-    //   socket.disconnect()
-    //  }
+    return () => {
+      socket.off("room-assigned", handleRoomAssigned);
+      socket.off("updated-players", handleUpdatedPlayers);
+      socket.off("send-user-data", handleSendUserData);
+      socket.off("receiving", handleReceiving);
+      socket.off("game-start", handleGameStart);
+      socket.off("game-already-started", handleGameAlreadyStarted);
+      socket.off("game-stop", handleGameStop);
+      socket.off("start-turn", handleStartTurn);
+      socket.off("receive-words", handleReceiveWords);
+      socket.off("word-len", handleWordLen);
+      socket.off("start-draw", handleStartDraw);
+      socket.off("end-turn", handleEndTurn);
+      socket.off("recieve-chat", handleRecieveChat);
+      socket.off("game-ended-leaderboard", handleGameEndedLeaderboard);
+    };
   }, [socket]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    const ctx = canvas.getContext("2d");
-
-    setContext(ctx);
-  }, []);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
+    if (!canvas) return;
     const ctx = canvas.getContext("2d");
     ctx.lineCap = "round";
-    ctx.lineWidth = radius; // Set initial radius
-    ctx.strokeStyle = color; // Set initial color
-    setContext(ctx);
+    ctx.lineWidth = radius;
+    ctx.strokeStyle = color;
   }, [color, radius]);
-  useEffect(() => {
-    if (socket) {
-      socket.on("game-start", () => {
-        console.log("game started");
-        setgameStarted(true);
-      });
-    }
-  }, [socket]);
-
-  useEffect(() => {
-    if (socket) {
-      socket.on("game-already-started", () => {
-        setgameStarted(true);
-      });
-    }
-  }, [socket]);
-
-  useEffect(() => {
-    if (socket) {
-      socket.on("game-stop", () => {
-        console.log("game stopped");
-        setgameStarted(false);
-        setShowClock(false);
-        setCurrentUserDrawing(false);
-        setPlayerDrawing(null);
-      });
-    }
-  }, [socket]);
-
-  useEffect(() => {
-    if (socket) {
-      socket.on("start-turn", (player) => {
-        console.log("turn started of", player);
-        setGuessedWord(false);
-        clearCanvasAfterTurn(); // setPlayerDrawing(player)
-        setPlayerDrawing(player);
-        //getwiords function call
-        let newRandomWords = getRandomWords();
-        setWords(newRandomWords);
-        setShowWords(true);
-      });
-    }
-  }, [socket]);
-
-  useEffect(() => {
-    if (socket) {
-      socket.on("word-len", (wl) => {
-        console.log("selected word length", wl);
-        setWordLen(wl);
-      });
-    }
-  }, [socket]);
-
-  useEffect(() => {
-    if (socket) {
-      socket.on("start-draw", (player) => {
-        console.log("drawing started of", player);
-        setShowWords(false);
-        setShowClock(true);
-        clearCanvasAfterTurn(); // setPlayerDrawing(player)
-        // setPlayerDrawing(player)
-        if (player.id === socket.id) {
-          console.log("your turn started");
-          setCurrentUserDrawing(true);
-        }
-      });
-    }
-  }, [socket]);
-
-  useEffect(() => {
-    if (socket) {
-      socket.on("all-guessed-correct", () => {
-        console.log("all players guessed the word correct, end the timer");
-      });
-    }
-  }, [socket]);
-
-  useEffect(() => {
-    if (socket) {
-      socket.on("end-turn", (player) => {
-        console.log("turn ended of", player);
-        setGuessedWord(false);
-        setPlayerDrawing(null);
-        setShowClock(false);
-        setSelectedWord(null);
-        if (socket.id === player.id) {
-          console.log("your turn ended!");
-          setCurrentUserDrawing(false);
-        }
-      });
-    }
-  }, [socket]);
-
-  useEffect(() => {
-    if (socket) {
-      socket.on("recieve-chat", ({ msg, player, rightGuess, players }) => {
-        console.log(msg, player, rightGuess, players);
-        setAllPlayer(players);
-        if (rightGuess) {
-          // will be adding an attr to chat object later for the green colour
-          // one option that can be further explored is that push the messages in efrontend withut sending all chats from the backend
-          if (player.id === socket.id) {
-            // chats.pop();
-            setGuessedWord(true);
-            setAllChats((prevchats) => [
-              {
-                sender: "you",
-                message: `you guessed the right word! (${msg})`,
-                rightGuess,
-              },
-              ...prevchats,
-            ]);
-          } else {
-            setAllChats((prevchats) => [
-              {
-                sender: player.name,
-                message: `${player.name} guessed the word right!`,
-                rightGuess,
-              },
-              ...prevchats,
-            ]);
-          }
-        } else {
-          if (player.id === socket.id) {
-            // allChats.push({sender: "you", message: inputMessage})
-            // setAllChats([...allChats, {sender: "you", message: inputMessage}])
-            // console.log(allChats)
-            // allChats.push({sender: "you", message: msg})
-            // let newChats = [...allChats]
-            // console.log(newChats)
-            // let newChat = {sender: "you", message: msg}
-            // newChats.push(newChat)
-            // console.log(newChats)
-            // setAllChats(newChats)
-            setAllChats((prevchats) => [
-              { sender: "you", message: msg, rightGuess },
-              ...prevchats,
-            ]);
-          } else {
-            setAllChats((prevchats) => [
-              { sender: player.name, message: msg, rightGuess },
-              ...prevchats,
-            ]);
-          }
-        }
-        // setAllChats(chats.reverse());
-      });
-    }
-  }, [socket]);
-
-  // useEffect(()=>{
-  //     if(socket){
-  //       socket.on("right-guess",()=>{
-  //         console.log("Congratulations! you guessed the right word")
-  //       })
-  //     }
-  // },[socket])
 
   const startPaint = (event) => {
     if (!currentUserDrawing) return;
-
     const coordinates = getCoordinates(event);
-    console.log(context);
     if (coordinates) {
       setIsPainting(true);
       setMousePosition(coordinates);
-      if (straightLineMode) {
-        setStartPoint(coordinates);
-      }
+      if (straightLineMode) setStartPoint(coordinates);
     }
   };
 
   const paint = (event) => {
-    if (!isPainting || straightLineMode) {
-      return;
-    }
+    if (!isPainting || straightLineMode) return;
     const newMousePosition = getCoordinates(event);
     if (mousePosition && newMousePosition) {
-      if (isEraser) {
-        eraseLine(newMousePosition);
-      } else {
-        drawLine(newMousePosition);
-      }
+      if (isEraser) eraseLine(newMousePosition);
+      else drawLine(newMousePosition);
       setMousePosition(newMousePosition);
     }
   };
@@ -342,54 +253,40 @@ function PlayScreen() {
   };
 
   const getCoordinates = (event) => {
-    // const canvas = canvasRef.current;
+    if (!canvasRef.current) return null;
+    const rect = canvasRef.current.getBoundingClientRect();
     return {
-      x: event.pageX - canvasRef.current.offsetLeft,
-      y: event.pageY - canvasRef.current.offsetTop,
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
     };
   };
 
   const drawLine = async (position) => {
-    // const canvas = canvasRef.current;
-    // const context = canvas.getContext('2d');
-    // if (context) {
-    context.strokeStyle = color; // Set the stroke style to the current color
-    context.beginPath(); // Start a new path for each line segment
+    const canvas = canvasRef.current;
+    const context = canvas.getContext("2d");
+    context.strokeStyle = color;
+    context.beginPath();
     context.moveTo(mousePosition.x, mousePosition.y);
     context.lineTo(position.x, position.y);
     context.lineWidth = radius;
-
     context.stroke();
-    const dataURL = await canvasRef.current.toDataURL("image/png");
+
+    const dataURL = canvas.toDataURL("image/png");
     socket.emit("sending", dataURL);
-    const newLines = [
-      ...lines,
-      { start: mousePosition, end: position, color, radius },
-    ];
-    setLines(newLines);
-    setMousePosition(position); // Update mouse position
-    // }
+    setLines((prev) => [...prev, { start: mousePosition, end: position, color, radius }]);
+    setMousePosition(position);
   };
+
   const handleMouseUp = (event) => {
-    if (straightLineMode && startPoint) {
-      drawStraightLine(event);
-    }
+    if (straightLineMode && startPoint) drawStraightLine(event);
     exitPaint();
   };
 
   const drawStraightLine = async (event) => {
-    // const canvas = canvasRef.current;
-    // const context = canvas.getContext('2d');
-
-    // Handle potential errors (optional)
-    // if (!canvas || !context) {
-    //   console.error('Canvas or context unavailable for drawing line.');
-    //   return;
-    // }
-
-    // Check if straight line mode is enabled and startPoint is set
     if (straightLineMode && startPoint) {
-      const endPoint = getCoordinates(event); // Get release coordinates
+      const endPoint = getCoordinates(event);
+      const canvas = canvasRef.current;
+      const context = canvas.getContext("2d");
 
       context.strokeStyle = color;
       context.lineWidth = radius;
@@ -398,16 +295,15 @@ function PlayScreen() {
       context.lineTo(endPoint.x, endPoint.y);
       context.stroke();
 
-      const dataURL = await canvasRef.current.toDataURL("image/png");
+      const dataURL = canvas.toDataURL("image/png");
       socket.emit("sending", dataURL);
-      // Reset startPoint for next straight line
       setStartPoint(null);
     }
   };
+
   const eraseLine = async (position) => {
-    // const canvas = canvasRef.current;
-    // const context = canvas.getContext('2d');
-    // if (context) {
+    const canvas = canvasRef.current;
+    const context = canvas.getContext("2d");
     const imageData = context.getImageData(
       position.x - radius,
       position.y - radius,
@@ -416,125 +312,114 @@ function PlayScreen() {
     );
     const data = imageData.data;
     for (let i = 0; i < data.length; i += 4) {
-      // Set alpha channel to 0 to erase
       data[i + 3] = 0;
     }
     context.putImageData(imageData, position.x - radius, position.y - radius);
 
-    const dataURL = await canvasRef.current.toDataURL("image/png");
+    const dataURL = canvas.toDataURL("image/png");
     socket.emit("sending", dataURL);
-    const newLines = lines.filter((line) => {
-      const startX = Math.min(line.start.x, line.end.x) - radius;
-      const endX = Math.max(line.start.x, line.end.x) + radius;
-      const startY = Math.min(line.start.y, line.end.y) - radius;
-      const endY = Math.max(line.start.y, line.end.y) + radius;
-      return (
-        position.x < startX ||
-        position.x > endX ||
-        position.y < startY ||
-        position.y > endY
-      );
-    });
-    setLines(newLines);
-    // }
   };
+
   const fillCanvas = async () => {
-    // const canvas = canvasRef.current;
-    // if (!canvas) {
-    //     console.error('Canvas element not found.');
-    //     return;
-    // }
-
-    // const context = canvas.getContext('2d');
-    // if (!context) {
-    //     console.error('Canvas context not available.');
-    //     return;
-    // }
     if (!currentUserDrawing) return;
-
-    context.fillStyle = color; // Set the fill color to the current color
-    context.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height); // Fill the entire canvas
-    const dataURL = await canvasRef.current.toDataURL("image/png");
+    const canvas = canvasRef.current;
+    const context = canvas.getContext("2d");
+    context.fillStyle = color;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    const dataURL = canvas.toDataURL("image/png");
     socket.emit("sending", dataURL);
   };
 
   const clearCanvas = async () => {
-    // const canvas = canvasRef.current;
-    // const context = canvas.getContext('2d');
-    // if (context) {
     if (!currentUserDrawing) return;
-
-    context.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+    const canvas = canvasRef.current;
+    const context = canvas.getContext("2d");
+    context.clearRect(0, 0, canvas.width, canvas.height);
     setLines([]);
-    const dataURL = await canvasRef.current.toDataURL("image/png");
+    const dataURL = canvas.toDataURL("image/png");
     socket.emit("sending", dataURL);
   };
 
   const clearCanvasAfterTurn = () => {
-    if (context) {
-      context.clearRect(
-        0,
-        0,
-        canvasRef.current.width,
-        canvasRef.current.height
-      );
+    const canvas = canvasRef.current;
+    if (canvas) {
+      const context = canvas.getContext("2d");
+      context.clearRect(0, 0, canvas.width, canvas.height);
     }
   };
-  const handleChangeText = (e) => {
-    setInputMessage(e.target.value);
-  };
+
   const handleSubmitForm = (e) => {
     e.preventDefault();
-    if (!inputMessage) {
-      return;
-    }
-    console.log(inputMessage);
-    socket.emit("sending-chat", inputMessage.toLocaleLowerCase());
-    console.log("socekt in send msg:", socket.id);
+    if (!inputMessage) return;
+    socket.emit("sending-chat", inputMessage.toLowerCase());
     setInputMessage("");
   };
 
   const handleWorSelect = (w) => {
     setShowWords(false);
     setSelectedWord(w);
-    //emit to bacikend this wordd
     socket.emit("word-select", w);
     setWords([]);
   };
 
-  const getRandomWords = () => {
-    let lengthWordArray = getWordsArrayLength();
-    let newWordsArray = [];
-    let newIndex;
-    let prevIndex = -1;
-    for (let i = 0; i < 3; i++) {
-      newIndex = Math.floor(Math.random() * lengthWordArray);
+  const handleStartGameClick = () => {
+    if (socket) {
+      const customWordsArray = customWordsInput
+        .split(",")
+        .map((w) => w.trim())
+        .filter((w) => w.length > 0);
 
-      while (newIndex === prevIndex) {
-        newIndex = Math.floor(Math.random() * lengthWordArray);
-      }
-      newWordsArray.push(wordsArray[newIndex]);
-      prevIndex = newIndex;
+      socket.emit("host-start-game", {
+        maxRounds: maxRounds,
+        customWords: customWordsArray,
+      });
     }
-    console.log(newWordsArray);
-    return newWordsArray;
   };
+
+  // ✅ HÀM LƯU ẢNH BẮN TRỰC TIẾP SANG BACKEND AZURE
+  const handleSaveDrawing = async () => {
+    if (!canvasRef.current) return;
+    const imageBase64 = canvasRef.current.toDataURL("image/png");
+
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/upload-drawing`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          imageBase64,
+          roomCode: currentRoomCode,
+          username: userDataRecieved.username || localStorage.getItem("username") || "Anonymous",
+        }),
+      });
+
+      const data = await response.json();
+      if (response.ok && data.success) {
+        alert("🎉 ĐÃ LƯU BỨC TRANH LÊN AZURE BLOB STORAGE!\n\nLink ảnh: " + data.imageUrl);
+        if (data.imageUrl) window.open(data.imageUrl, "_blank");
+      } else {
+        alert("❌ Lỗi: " + (data.message || "Không thể lưu ảnh"));
+      }
+    } catch (err) {
+      console.error(err);
+      alert("❌ Lỗi kết nối Server khi lưu ảnh!");
+    }
+  };
+
   const basicColors = [
-    "#000000",
-    "#FF0000",
-    "#00FF00",
-    "#0000FF",
-    "#FFFF00",
-    "#FF00FF",
-    "#00FFFF",
-    "#C0C0C0",
-    "#808080",
-    "#FFFFFF",
+    "#000000", "#FF0000", "#00FF00", "#0000FF", "#FFFF00",
+    "#FF00FF", "#00FFFF", "#C0C0C0", "#808080", "#FFFFFF",
   ];
 
   return (
     <div className="relative w-screen h-screen">
       <div className="w-full h-full flex flex-col justify-center items-center gap-4">
+        <div className="flex items-center gap-2 bg-slate-800 text-yellow-400 px-5 py-2 rounded-full border-2 border-yellow-400 shadow-lg">
+          <span className="font-bold text-sm tracking-wider">MÃ PHÒNG:</span>
+          <span className="text-white font-mono font-extrabold text-xl tracking-widest select-all">
+            {currentRoomCode || "Đang kết nối..."}
+          </span>
+        </div>
+
         <div>
           <WordBar
             showClock={showClock}
@@ -545,19 +430,21 @@ function PlayScreen() {
             selectedWord={selectedWord}
           />
         </div>
+
         <div className="w-full flex justify-center items-center gap-10">
-          <div className="w-[300px] h-[540px] border border-black bg-white text-black">
+          <div className="w-[300px] h-[540px] border border-black bg-white text-black overflow-y-auto">
             {allPlayers &&
               allPlayers.map((pl, idx) => (
                 <PlayerCard
                   key={idx}
                   pl={pl}
-                  curruser={pl.id === socket.id}
+                  curruser={socket && pl.id === socket.id}
                   playerDrawing={playerDrawing}
                 />
               ))}
           </div>
-          <div className="w-[680px] h-[540px] ">
+
+          <div className="w-[680px] h-[540px] relative">
             <canvas
               ref={canvasRef}
               width={680}
@@ -566,155 +453,159 @@ function PlayScreen() {
               onMouseMove={paint}
               onMouseUp={handleMouseUp}
               onMouseLeave={exitPaint}
-              className={`${!currentUserDrawing ? "cursor-not-allowed" : ""}`}
-              style={{ border: "1px solid #000", backgroundColor: "white" }}
+              className={`border border-black bg-white ${
+                currentUserDrawing ? "cursor-crosshair" : "cursor-not-allowed"
+              }`}
             />
+
+            {!gameStarted && (
+              <div className="absolute top-0 left-0 w-full h-full bg-slate-900 bg-opacity-95 flex flex-col justify-center items-center text-white z-20 rounded-lg p-6">
+                <h2 className="text-3xl font-extrabold mb-4 text-yellow-400">PHÒNG CHỜ</h2>
+                <p className="text-gray-300 mb-6 font-semibold text-lg">
+                  Số người chơi trong phòng: {allPlayers.length}/8
+                </p>
+
+                {socket && socket.id === hostId ? (
+                  <div className="w-full max-w-md bg-slate-800 p-4 rounded-xl mb-6 shadow-lg border border-slate-700">
+                    <label className="block text-sm font-bold mb-2 text-sky-300">
+                      SỐ VÒNG CHƠI (ROUNDS): {maxRounds}
+                    </label>
+                    <input
+                      type="range"
+                      min="1"
+                      max="10"
+                      value={maxRounds}
+                      onChange={(e) => setMaxRounds(parseInt(e.target.value))}
+                      className="w-full mb-4 accent-sky-500"
+                    />
+                  </div>
+                ) : (
+                  <div className="w-full max-w-md bg-slate-800 p-6 rounded-xl mb-6 text-center border border-slate-700">
+                    <p className="text-xl animate-pulse text-sky-300 font-bold">
+                      Đang chờ Chủ phòng cài đặt trận đấu...
+                    </p>
+                  </div>
+                )}
+
+                {socket && socket.id === hostId && (
+                  <button
+                    onClick={handleStartGameClick}
+                    disabled={allPlayers.length < 2}
+                    className={`px-8 py-3 rounded-full font-bold text-lg shadow-lg transition-all ${
+                      allPlayers.length >= 2
+                        ? "bg-green-500 hover:bg-green-600 text-white cursor-pointer scale-105"
+                        : "bg-gray-500 text-gray-300 cursor-not-allowed"
+                    }`}
+                  >
+                    {allPlayers.length >= 2 ? "BẮT ĐẦU TRẬN ĐẤU" : "CẦN TỐI THIỂU 2 NGƯỜI CHƠI..."}
+                  </button>
+                )}
+              </div>
+            )}
+
             <div>
-              {showWords && playerDrawing && playerDrawing.id === socket.id && (
-                <div className="absolute top-0 left-0 h-full w-full flex justify-center gap-10 items-center z-10 bg-white bg-opacity-80">
-                  {words.map((w, idx) => (
-                    <div
-                      onClick={() => handleWorSelect(w)}
-                      key={idx}
-                      className="text-black text-center w-36 h-7 border-2 rounded-md border-black"
+              {showWords && playerDrawing && socket && playerDrawing.id === socket.id && (
+                <div className="absolute top-0 left-0 h-full w-full flex flex-col justify-center items-center z-10 bg-white bg-opacity-95 rounded-lg shadow-2xl border-4 border-sky-300">
+                  <h3 className="text-2xl font-extrabold mb-6 text-slate-800">CHỌN 1 TỪ ĐỂ VẼ</h3>
+                  <div className="flex gap-6 mb-8">
+                    {words.map((w, idx) => (
+                      <div
+                        onClick={() => handleWorSelect(w)}
+                        key={idx}
+                        className="text-black text-center font-bold px-6 py-3 text-lg border-2 rounded-xl border-slate-700 cursor-pointer hover:bg-yellow-300 hover:scale-105 transition-all shadow-md"
+                      >
+                        {w}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center gap-3 bg-slate-100 p-4 rounded-xl shadow-inner border border-slate-300">
+                    <span className="font-bold text-slate-600">Hoặc tự nhập:</span>
+                    <input
+                      type="text"
+                      id="customDrawerWord"
+                      placeholder="VD: con chó, hoa sen..."
+                      className="px-4 py-2 rounded-lg border-2 border-slate-400 focus:border-sky-500 focus:ring-2 focus:ring-sky-300 outline-none text-black"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && e.target.value.trim()) {
+                          handleWorSelect(e.target.value.trim());
+                        }
+                      }}
+                    />
+                    <button
+                      onClick={() => {
+                        const val = document.getElementById("customDrawerWord").value.trim();
+                        if (val) handleWorSelect(val);
+                      }}
+                      className="bg-green-500 text-white px-5 py-2 rounded-lg font-bold hover:bg-green-600 shadow-md transition-transform hover:scale-105"
                     >
-                      {w}
-                    </div>
-                  ))}
+                      CHỌN
+                    </button>
+                  </div>
                 </div>
               )}
-              {showWords && playerDrawing && playerDrawing.id !== socket.id && (
-                <div className="text-black absolute h-full w-full top-0 left-0 flex justify-center items-center z-10 bg-white bg-opacity-80">
-                  {`${playerDrawing.name} is choosing a word`}
+              {showWords && playerDrawing && socket && playerDrawing.id !== socket.id && (
+                <div className="text-xl font-bold text-slate-700 absolute h-full w-full top-0 left-0 flex justify-center items-center z-10 bg-white bg-opacity-90 rounded-lg animate-pulse">
+                  {`${playerDrawing.name} đang chọn từ...`}
                 </div>
               )}
             </div>
           </div>
+
           <div className="w-[300px] h-[540px] border border-black flex flex-col-reverse rounded-b-lg p-1">
-            <form
-              onSubmit={(e) => {
-                handleSubmitForm(e);
-              }}
-            >
+            <form onSubmit={handleSubmitForm}>
               <input
                 value={inputMessage}
                 placeholder="Type your guess here"
                 className={`min-w-full active max-w-full text-black flex flex-wrap px-6 py-2 rounded-lg font-medium bg-sky-50 bg-opacity-40 border border-blue-300 placeholder-gray-400 text-md focus:outline-none focus:border-blue-400 focus:bg-white focus:ring-0 focus:shadow-[0_0px_10px_2px_#bfdbfe] ${
-                  currentUserDrawing || showWords || !gameStarted
-                    ? "cursor-not-allowed"
-                    : ""
+                  currentUserDrawing || showWords || !gameStarted ? "cursor-not-allowed" : ""
                 }`}
-                onChange={(e) => handleChangeText(e)}
+                onChange={(e) => setInputMessage(e.target.value)}
                 disabled={currentUserDrawing || showWords || !gameStarted || guessedWord}
-              ></input>
+              />
             </form>
-            {allChats &&
-              allChats.length > 0 &&
-              allChats.map((chat, idx) => (
-                <p
-                  className={`${
-                    chat.rightGuess ? "bg-green-200 text-green-600" : ""
-                  }`}
-                  key={idx}
-                >
-                  {chat.rightGuess
-                    ? chat.message
-                    : `${chat.sender}: ${chat.message}`}
-                </p>
-              ))}
+            <div className="overflow-y-auto flex flex-col-reverse h-full">
+              {allChats &&
+                allChats.length > 0 &&
+                allChats.map((chat, idx) => (
+                  <p
+                    className={`${chat.rightGuess ? "bg-green-200 text-green-600 font-bold" : ""}`}
+                    key={idx}
+                  >
+                    {chat.rightGuess ? chat.message : `${chat.sender}: ${chat.message}`}
+                  </p>
+                ))}
+            </div>
           </div>
         </div>
+
         {currentUserDrawing && (
-          <>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "center",
-                marginTop: "10px",
-              }}
-            >
+          <div className="flex flex-col items-center gap-2 mt-2">
+            <div className="flex justify-center gap-1">
               {basicColors.map((c, index) => (
                 <button
                   key={index}
-                  style={{
-                    backgroundColor: c,
-                    width: "40px",
-                    height: "40px",
-                    margin: "0 5px",
-                    border: "2px solid #333",
-                    borderRadius: "10px",
-                    cursor: "pointer",
-                    transition: "border-color 0.3s ease",
-                    outline: "none",
-                    boxShadow: "3px 3px 5px rgba(0, 0, 0, 0.1)",
-                    transition: "transform 0.3s",
-                  }}
+                  style={{ backgroundColor: c }}
                   onClick={() => setColor(c)}
-                  onMouseEnter={(e) => (e.target.style.borderColor = "#FFA500")}
-                  onMouseLeave={(e) => (e.target.style.borderColor = "#333")}
-                  className="zoom-btn"
+                  className="w-10 h-10 border-2 border-slate-700 rounded-lg cursor-pointer shadow-sm hover:scale-105 transition-transform"
                 />
               ))}
             </div>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "center",
-                marginTop: "10px",
-              }}
-            >
+            <div className="flex justify-center items-center gap-3">
               <button
-                className="zoom-btn"
-                style={{
-                  backgroundColor: "black",
-                  padding: "8px 20px",
-                  margin: "0 10px",
-                  border: "2px solid black",
-                  borderRadius: "10px",
-                  fontFamily: "Comic Sans MS",
-                  fontSize: "18px",
-                  fontWeight: "bold",
-                  color: "white",
-                  cursor: "pointer",
-                }}
+                className="bg-black text-white px-4 py-2 rounded-lg font-bold hover:bg-gray-800"
                 onClick={() => setIsEraser(!isEraser)}
               >
                 {isEraser ? "Draw" : "Eraser"}
               </button>
               <button
-                className="zoom-btn"
-                style={{
-                  backgroundColor: "black",
-                  padding: "8px 20px",
-                  margin: "0 10px",
-                  border: "2px solid black",
-                  borderRadius: "10px",
-                  fontFamily: "Comic Sans MS",
-                  fontSize: "18px",
-                  fontWeight: "bold",
-                  color: "white",
-                  cursor: "pointer",
-                }}
+                className="bg-black text-white px-4 py-2 rounded-lg font-bold hover:bg-gray-800"
                 onClick={() => setStraightLineMode(!straightLineMode)}
               >
-                {straightLineMode
-                  ? "Disable Straight Line"
-                  : "Enable Straight Line"}
+                {straightLineMode ? "Disable Line" : "Enable Line"}
               </button>
               <button
-                className="zoom-btn"
-                style={{
-                  backgroundColor: "black",
-                  padding: "8px 20px",
-                  margin: "0 10px",
-                  border: "2px solid black",
-                  borderRadius: "10px",
-                  fontFamily: "Comic Sans MS",
-                  fontSize: "18px",
-                  fontWeight: "bold",
-                  color: "white",
-                  cursor: "pointer",
-                }}
+                className="bg-black text-white px-4 py-2 rounded-lg font-bold hover:bg-gray-800"
                 onClick={fillCanvas}
               >
                 Fill Canvas
@@ -722,49 +613,83 @@ function PlayScreen() {
               <input
                 type="color"
                 value={color}
-                onChange={(e) => {
-                  if (e.target.value !== color) {
-                    setColor(e.target.value);
-                  }
-                }}
-                style={{ marginLeft: "10px", marginRight: "10px" }}
+                onChange={(e) => setColor(e.target.value)}
+                className="w-10 h-10 cursor-pointer"
               />
-              <label>Radius:</label>
+              <label className="font-bold text-slate-800">Radius:</label>
               <input
                 type="range"
                 min="1"
                 max="100"
                 value={radius}
                 onChange={(e) => setRadius(parseInt(e.target.value))}
-                style={{ marginLeft: "5px", marginRight: "10px" }}
               />
-
               <button
-                className="zoom-btn"
-                style={{
-                  padding: "8px 20px",
-                  margin: "0 10px",
-                  border: "2px solid black",
-                  borderRadius: "10px",
-                  fontFamily: "Comic Sans MS",
-                  fontSize: "18px",
-                  fontWeight: "bold",
-                  color: "white",
-                  cursor: "pointer",
-                }}
+                className="bg-black text-white px-4 py-2 rounded-lg font-bold hover:bg-gray-800"
                 onClick={clearCanvas}
               >
                 Clear
               </button>
+              <button
+                className="bg-emerald-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-emerald-700 shadow-md"
+                onClick={handleSaveDrawing}
+              >
+                Lưu tranh (Azure)
+              </button>
             </div>
-          </>
+          </div>
         )}
       </div>
+
+      {leaderboardData && (
+        <div className="absolute top-0 left-0 w-full h-full bg-slate-900 bg-opacity-95 flex flex-col justify-center items-center text-white z-50 rounded-lg p-6">
+          <h2 className="text-5xl font-extrabold mb-8 text-yellow-400 animate-bounce">
+            🏆 KẾT QUẢ TRẬN ĐẤU 🏆
+          </h2>
+
+          <div className="w-full max-w-md bg-slate-800 rounded-xl p-6 shadow-2xl border-2 border-slate-600 max-h-[60%] overflow-y-auto">
+            {leaderboardData.map((player, index) => {
+              let medal = "🏅";
+              if (index === 0) medal = "🥇";
+              if (index === 1) medal = "🥈";
+              if (index === 2) medal = "🥉";
+
+              return (
+                <div
+                  key={index}
+                  className="flex justify-between items-center p-4 mb-3 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors border border-slate-500"
+                >
+                  <div className="flex items-center gap-4">
+                    <span className="text-3xl">{medal}</span>
+                    <span className="font-bold text-xl">{player.name}</span>
+                  </div>
+                  <span className="font-extrabold text-2xl text-yellow-400">
+                    {player.points} pts
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+
+          {socket && socket.id === hostId ? (
+            <button
+              onClick={() => {
+                setLeaderboardData(null);
+                socket.emit("return-to-lobby");
+              }}
+              className="mt-8 px-8 py-3 bg-blue-500 hover:bg-blue-600 rounded-full font-bold text-white shadow-lg transition-transform hover:scale-110 text-xl border-2 border-blue-400"
+            >
+              QUAY VỀ PHÒNG CHỜ
+            </button>
+          ) : (
+            <p className="mt-8 text-sky-300 animate-pulse font-bold text-xl">
+              Đang đợi Chủ phòng đưa về sảnh...
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
 export default PlayScreen;
-
-// className={`${!currentUserDrawing?"cursor-not-allowed":""}`}
-//
