@@ -4,6 +4,24 @@ const app = express();
 const http = require("http");
 const { Server } = require("socket.io");
 const path = require("path");
+const { getSecret } = require("./keyvault");
+
+async function startServer() {
+  try {
+    // 1. Lấy chuỗi kết nối từ "két sắt" Key Vault
+    const dbConnectionString = await getSecret("DB-CONNECTION-STRING");
+    const redisConnectionString = await getSecret("REDIS-CONNECTION-STRING");
+
+    // 2. Dùng chuỗi kết nối này để khởi tạo kết nối DB / Redis
+    // (Ví dụ: connectDatabase(dbConnectionString);)
+
+    console.log("🚀 Server sẵn sàng hoạt động với cấu hình từ Key Vault!");
+  } catch (err) {
+    console.error("Không thể khởi động server do lỗi Key Vault:", err);
+  }
+}
+
+startServer();
 const dotenv = require("dotenv");
 dotenv.config();
 const { ServiceBusClient } = require("@azure/service-bus");
