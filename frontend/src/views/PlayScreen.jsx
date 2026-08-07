@@ -41,26 +41,49 @@ function PlayScreen() {
   // ✅ URL BACKEND APP SERVICE
   const BACKEND_URL = "https://skribbl-game-bjc3gwb7dygyg2e2.japaneast-01.azurewebsites.net";
 
-  // ✅ DUY NHẤT 1 useEffect ĐỂ KHỞI TẠO VÀ GÁN EVENT LISTENERS (CHỐNG TRÔI EVENT)
+  // ✅ DUY NHẤT 1 useEffect ĐỂ KHỞI TẠO VÀ CẤU HÌNH SOCKET
   useEffect(() => {
-    let us = localStorage.getItem("username");
-    if (!us || !userDataRecieved.username || !userDataRecieved.avatar) {
+    // 🛡️ Lấy dữ liệu người dùng (Ưu tiên location.state -> Dự phòng localStorage)
+    const us = userDataRecieved.username || localStorage.getItem("username");
+    const av = userDataRecieved.avatar || localStorage.getItem("avatar") || "1";
+
+    if (!us) {
+      console.warn("⚠️ [PLAYSCREEN] Không tìm thấy Username, quay về trang chủ...");
       navigate("/");
       return;
     }
 
+    console.log("🚀 [PLAYSCREEN] Khởi tạo kết nối Socket tới:", BACKEND_URL);
+
     // 1. Tạo kết nối Socket
     const newSocket = io(BACKEND_URL, {
-      transports: ["websocket"],
+      transports: ["websocket", "polling"],
+      reconnection: true,
+      reconnectionAttempts: 5,
     });
 
-    // 2. Lắng nghe các sự kiện trực tiếp từ Server ngay khi vừa kết nối
+    // 🔍 --- LOG DEBUG CÔNG CỤ THEO DÕI TRỰC TIẾP TRÊN CONSOLE (F12) ---
+    newSocket.on("connect", () => {
+      console.log("🟢 [SOCKET CONNECTED] Kết nối thành công! Socket ID:", newSocket.id);
+    });
+
+    newSocket.on("connect_error", (err) => {
+      console.error("🔴 [SOCKET ERROR] Lỗi kết nối Socket:", err.message);
+    });
+
+    newSocket.on("disconnect", (reason) => {
+      console.warn("🟡 [SOCKET DISCONNECTED] Ngắt kết nối:", reason);
+    });
+
+    // 2. Gán các Event Listeners
     newSocket.on("room-assigned", (code) => {
+      console.log("🎉 [SOCKET] Nhận được mã phòng từ Server:", code);
       setCurrentRoomCode(code);
       currentRoomCodeRef.current = code;
     });
 
     newSocket.on("updated-players", (data) => {
+      console.log("👥 [SOCKET] Cập nhật danh sách người chơi:", data);
       if (data.players) {
         setAllPlayer(data.players);
         setHostId(data.hostId);
@@ -76,11 +99,18 @@ function PlayScreen() {
         userDataRecieved.room ||
         userDataRecieved.code ||
         userDataRecieved.roomId ||
+        localStorage.getItem("roomCode") ||
         "";
 
+      console.log("📤 [SOCKET] Server yêu cầu gửi thông tin user. Đang emit 'recieve-user-data':", {
+        username: us,
+        avatar: av,
+        roomCode: roomCodeFromHome,
+      });
+
       newSocket.emit("recieve-user-data", {
-        username: userDataRecieved.username,
-        avatar: userDataRecieved.avatar,
+        username: us,
+        avatar: av,
         roomCode: roomCodeFromHome,
       });
     });
@@ -177,11 +207,12 @@ function PlayScreen() {
       setLeaderboardData(null);
     });
 
-    // 3. Cập nhật socket state
+    // 3. Cập nhật state
     setSocket(newSocket);
 
-    // 4. Ngắt kết nối khi component unmount
+    // 4. Cleanup ngắt kết nối khi unmount
     return () => {
+      console.log("🧹 [SOCKET] Cleaning up socket connection...");
       newSocket.disconnect();
     };
   }, []);
