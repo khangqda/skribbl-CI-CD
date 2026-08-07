@@ -45,7 +45,13 @@ function PlayScreen() {
   useEffect(() => {
     // 🛡️ Lấy dữ liệu người dùng (Ưu tiên location.state -> Dự phòng localStorage)
     const us = userDataRecieved.username || localStorage.getItem("username");
-    const av = userDataRecieved.avatar || localStorage.getItem("avatar") || "1";
+    let av = userDataRecieved.avatar || localStorage.getItem("avatar") || "1";
+
+    // 🔥 FIX LỖI 1: Nếu Avatar là chuỗi Base64 Data URL quá dài, chuyển về ID "1" để tránh làm sập Frame Azure Web PubSub
+    if (av && (av.length > 100 || av.startsWith("data:image"))) {
+      console.warn("⚠️ [PLAYSCREEN] Avatar Base64 quá lớn, chuyển về ID mặc định '1' để tránh nghẽn Socket");
+      av = "1";
+    }
 
     if (!us) {
       console.warn("⚠️ [PLAYSCREEN] Không tìm thấy Username, quay về trang chủ...");
@@ -86,10 +92,12 @@ function PlayScreen() {
       });
     };
 
-    // 🔍 2. SỰ KIỆN CONNECT: BÁO XANH LÀ GỬI USER DATA NAY VÀ LUÔN!
+    // 🔍 2. SỰ KIỆN CONNECT: BÁO XANH -> DELAY 100ms ĐỂ DỮ LIỆU ĐƯỢC CHUYỂN ĐI 100% ỔN ĐỊNH
     newSocket.on("connect", () => {
       console.log("🟢 [SOCKET CONNECTED] Kết nối thành công! Socket ID:", newSocket.id);
-      sendUserData(); // 🔥 Khắc phục trôi event trên Azure Web PubSub
+      setTimeout(() => {
+        sendUserData();
+      }, 100);
     });
 
     newSocket.on("send-user-data", () => {
