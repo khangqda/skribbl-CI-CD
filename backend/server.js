@@ -3,6 +3,7 @@ const cors = require("cors");
 const app = express();
 const http = require("http");
 const { Server } = require("socket.io");
+const { useAzureSocketIO } = require("@azure/web-pubsub-socket.io");
 const path = require("path");
 
 const { getSecret } = require("./keyvault");
@@ -27,16 +28,17 @@ async function startServer() {
   try {
     console.log("⏳ Đang kết nối tới Azure Key Vault...");
     
-    // 1. RÚT MẬT KHẨU TỪ KEY VAULT
+    // 2. RÚT MẬT KHẨU TỪ KEY VAULT
     const dbConnectionString = await getSecret("DB-CONNECTION-STRING");
     const redisConnectionString = await getSecret("REDIS-CONNECTION-STRING");
+    const pubsubConnectionString = await getSecret("WEBPUBSUB-CONNECTION-STRING");
     
     // Lưu ý: Nếu bác có đưa chuỗi ServiceBus/Blob vào Key Vault thì rút ở đây luôn. 
     // Tạm thời tui dùng process.env cho 2 thằng này như code cũ của bác.
     const sbConnectionString = process.env.SERVICEBUS_CONNECTION_STRING;
     const blobConnectionString = process.env.AZURE_STORAGE_CONNECTION_STRING;
 
-    // 2. KHỞI TẠO POSTGRESQL VỚI SECRET TỪ KEY VAULT
+    // 5. KHỞI TẠO POSTGRESQL VỚI SECRET TỪ KEY VAULT
     pool = new Pool({
       connectionString: dbConnectionString, // 👈 ĐÃ ĐƯỢC THAY BẰNG SECRET KEY VAULT
       ssl: { rejectUnauthorized: false }
@@ -63,8 +65,10 @@ async function startServer() {
       }
     });
 
-    // 3. KHỞI TẠO REDIS VỚI SECRET TỪ KEY VAULT
-    redisClient = createClient({ url: redisConnectionString }); // 👈 ĐÃ ĐƯỢC THAY BẰNG SECRET KEY VAULT
+    // 3. KHỞI TẠO REDIS VỚI SECRET TỪ KEY VAULT (ĐÃ FIX LỖI INVALID URL)
+    const formattedRedisUrl = `rediss://:${redisConnectionString}@skribbl-redis-managed.japaneast.redis.azure.net:10000`;
+    redisClient = createClient({ url: formattedRedisUrl }); 
+    
     redisClient.on("error", (err) => console.error("❌ Lỗi Redis:", err));
     redisClient.on("connect", () => console.log("⚡ Đã kết nối Azure Managed Redis từ Key Vault!"));
     await redisClient.connect();
@@ -85,6 +89,12 @@ async function startServer() {
     if (blobConnectionString) {
       blobServiceClient = BlobServiceClient.fromConnectionString(blobConnectionString);
     }
+    // 10. KHỞI TẠO AZURE WEB PUBSUB SOCKET.IO
+    useAzureSocketIO(io, {
+        hub: "skribblhub", 
+        connectionString: pubsubConnectionString
+    });
+    console.log("☁️ Đã chuyển giao quyền lực WebSocket cho Azure Web PubSub!");
 
     // 6. CHẠY SERVER LẮNG NGHE PORT
     const port_no = process.env.PORT || 3001;
