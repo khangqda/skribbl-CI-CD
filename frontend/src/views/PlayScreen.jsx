@@ -62,9 +62,39 @@ function PlayScreen() {
       reconnectionAttempts: 5,
     });
 
-    // 🔍 --- LOG DEBUG CÔNG CỤ THEO DÕI TRỰC TIẾP TRÊN CONSOLE (F12) ---
+    // 💡 Hàm trợ giúp chủ động gửi dữ liệu người chơi
+    const sendUserData = () => {
+      const roomCodeFromHome =
+        currentRoomCodeRef.current ||
+        userDataRecieved.roomCode ||
+        userDataRecieved.room ||
+        userDataRecieved.code ||
+        userDataRecieved.roomId ||
+        localStorage.getItem("roomCode") ||
+        "";
+
+      console.log("📤 [SOCKET EMIT] Đang gửi thông tin user lên Server:", {
+        username: us,
+        avatar: av,
+        roomCode: roomCodeFromHome,
+      });
+
+      newSocket.emit("recieve-user-data", {
+        username: us,
+        avatar: av,
+        roomCode: roomCodeFromHome,
+      });
+    };
+
+    // 🔍 2. SỰ KIỆN CONNECT: BÁO XANH LÀ GỬI USER DATA NAY VÀ LUÔN!
     newSocket.on("connect", () => {
       console.log("🟢 [SOCKET CONNECTED] Kết nối thành công! Socket ID:", newSocket.id);
+      sendUserData(); // 🔥 Khắc phục trôi event trên Azure Web PubSub
+    });
+
+    newSocket.on("send-user-data", () => {
+      console.log("🟡 [SOCKET EVENT] Server yêu cầu gửi thông tin user");
+      sendUserData();
     });
 
     newSocket.on("connect_error", (err) => {
@@ -75,9 +105,9 @@ function PlayScreen() {
       console.warn("🟡 [SOCKET DISCONNECTED] Ngắt kết nối:", reason);
     });
 
-    // 2. Gán các Event Listeners
+    // 3. Gán các Event Listeners xử lý game
     newSocket.on("room-assigned", (code) => {
-      console.log("🎉 [SOCKET] Nhận được mã phòng từ Server:", code);
+      console.log("🎉 [SOCKET SUCCESS] Đã nhận mã phòng từ Server:", code);
       setCurrentRoomCode(code);
       currentRoomCodeRef.current = code;
     });
@@ -90,29 +120,6 @@ function PlayScreen() {
       } else {
         setAllPlayer(data);
       }
-    });
-
-    newSocket.on("send-user-data", () => {
-      const roomCodeFromHome =
-        currentRoomCodeRef.current ||
-        userDataRecieved.roomCode ||
-        userDataRecieved.room ||
-        userDataRecieved.code ||
-        userDataRecieved.roomId ||
-        localStorage.getItem("roomCode") ||
-        "";
-
-      console.log("📤 [SOCKET] Server yêu cầu gửi thông tin user. Đang emit 'recieve-user-data':", {
-        username: us,
-        avatar: av,
-        roomCode: roomCodeFromHome,
-      });
-
-      newSocket.emit("recieve-user-data", {
-        username: us,
-        avatar: av,
-        roomCode: roomCodeFromHome,
-      });
     });
 
     newSocket.on("receiving", async (data) => {
@@ -207,10 +214,10 @@ function PlayScreen() {
       setLeaderboardData(null);
     });
 
-    // 3. Cập nhật state
+    // 4. Cập nhật state
     setSocket(newSocket);
 
-    // 4. Cleanup ngắt kết nối khi unmount
+    // 5. Cleanup ngắt kết nối khi unmount
     return () => {
       console.log("🧹 [SOCKET] Cleaning up socket connection...");
       newSocket.disconnect();
