@@ -38,13 +38,10 @@ function PlayScreen() {
   const location = useLocation();
   const userDataRecieved = location.state || {};
 
-  // 🔴 THAY TÊN PUBSUB CỦA BÁC VÀO ĐÂY (Lấy ở trang Overview của Azure Web PubSub)
-  const PUBSUB_URL = "https://skribbl-pubsub.webpubsub.azure.com";
-  
-  // ✅ CHỈ CẦN DUY NHẤT URL BACKEND APP SERVICE
+  // ✅ URL BACKEND APP SERVICE
   const BACKEND_URL = "https://skribbl-game-bjc3gwb7dygyg2e2.japaneast-01.azurewebsites.net";
 
-  // 1. Khởi tạo Socket
+  // ✅ DUY NHẤT 1 useEffect ĐỂ KHỞI TẠO VÀ GÁN EVENT LISTENERS (CHỐNG TRÔI EVENT)
   useEffect(() => {
     let us = localStorage.getItem("username");
     if (!us || !userDataRecieved.username || !userDataRecieved.avatar) {
@@ -52,36 +49,27 @@ function PlayScreen() {
       return;
     }
 
-    // ✅ ĐÃ SỬA: Socket.io Client trỏ thẳng về Backend App Service
+    // 1. Tạo kết nối Socket
     const newSocket = io(BACKEND_URL, {
       transports: ["websocket", "polling"],
     });
-    setSocket(newSocket);
 
-    return () => {
-      if (newSocket) newSocket.disconnect();
-    };
-  }, []);
-
-  // 2. Cài đặt các Event Listeners
-  useEffect(() => {
-    if (!socket) return;
-
-    const handleRoomAssigned = (code) => {
+    // 2. Lắng nghe các sự kiện trực tiếp từ Server ngay khi vừa kết nối
+    newSocket.on("room-assigned", (code) => {
       setCurrentRoomCode(code);
       currentRoomCodeRef.current = code;
-    };
-    
-    const handleUpdatedPlayers = (data) => {
+    });
+
+    newSocket.on("updated-players", (data) => {
       if (data.players) {
         setAllPlayer(data.players);
         setHostId(data.hostId);
       } else {
         setAllPlayer(data);
       }
-    };
+    });
 
-    const handleSendUserData = () => {
+    newSocket.on("send-user-data", () => {
       const roomCodeFromHome =
         currentRoomCodeRef.current ||
         userDataRecieved.roomCode ||
@@ -90,14 +78,14 @@ function PlayScreen() {
         userDataRecieved.roomId ||
         "";
 
-      socket.emit("recieve-user-data", {
+      newSocket.emit("recieve-user-data", {
         username: userDataRecieved.username,
         avatar: userDataRecieved.avatar,
         roomCode: roomCodeFromHome,
       });
-    };
+    });
 
-    const handleReceiving = async (data) => {
+    newSocket.on("receiving", async (data) => {
       const canvas = canvasRef.current;
       if (!canvas) return;
       const ctx = canvas.getContext("2d");
@@ -114,52 +102,52 @@ function PlayScreen() {
         ctx.drawImage(img, 0, 0);
       };
       img.src = imageUrl;
-    };
+    });
 
-    const handleGameStart = () => setgameStarted(true);
-    const handleGameAlreadyStarted = () => setgameStarted(true);
-    const handleGameStop = () => {
+    newSocket.on("game-start", () => setgameStarted(true));
+    newSocket.on("game-already-started", () => setgameStarted(true));
+    newSocket.on("game-stop", () => {
       setgameStarted(false);
       setShowClock(false);
       setCurrentUserDrawing(false);
       setPlayerDrawing(null);
-    };
+    });
 
-    const handleStartTurn = (player) => {
+    newSocket.on("start-turn", (player) => {
       setGuessedWord(false);
       clearCanvasAfterTurn();
       setPlayerDrawing(player);
       setShowWords(false);
       setCurrentUserDrawing(false);
-    };
+    });
 
-    const handleReceiveWords = (serverWords) => {
+    newSocket.on("receive-words", (serverWords) => {
       setWords(serverWords);
       setShowWords(true);
-    };
+    });
 
-    const handleWordLen = (wl) => setWordLen(wl);
+    newSocket.on("word-len", (wl) => setWordLen(wl));
 
-    const handleStartDraw = (player) => {
+    newSocket.on("start-draw", (player) => {
       setShowWords(false);
       setShowClock(true);
       clearCanvasAfterTurn();
-      const isMeDrawing = Boolean(player && socket && player.id === socket.id);
+      const isMeDrawing = Boolean(player && newSocket && player.id === newSocket.id);
       setCurrentUserDrawing(isMeDrawing);
-    };
+    });
 
-    const handleEndTurn = (player) => {
+    newSocket.on("end-turn", () => {
       setGuessedWord(false);
       setPlayerDrawing(null);
       setShowClock(false);
       setSelectedWord(null);
       setCurrentUserDrawing(false);
-    };
+    });
 
-    const handleRecieveChat = ({ msg, player, rightGuess, players }) => {
+    newSocket.on("recieve-chat", ({ msg, player, rightGuess, players }) => {
       setAllPlayer(players);
       if (rightGuess) {
-        if (player.id === socket.id) {
+        if (player.id === newSocket.id) {
           setGuessedWord(true);
           setAllChats((prev) => [
             { sender: "you", message: `you guessed the right word! (${msg})`, rightGuess },
@@ -173,53 +161,30 @@ function PlayScreen() {
         }
       } else {
         setAllChats((prev) => [
-          { sender: player.id === socket.id ? "you" : player.name, message: msg, rightGuess },
+          { sender: player.id === newSocket.id ? "you" : player.name, message: msg, rightGuess },
           ...prev,
         ]);
       }
-    };
+    });
 
-    const handleGameEndedLeaderboard = (finalPlayers) => {
+    newSocket.on("game-ended-leaderboard", (finalPlayers) => {
       const sortedPlayers = [...finalPlayers].sort((a, b) => b.points - a.points);
       setLeaderboardData(sortedPlayers);
       setgameStarted(false);
-    };
+    });
 
-    socket.on("room-assigned", handleRoomAssigned);
-    socket.on("updated-players", handleUpdatedPlayers);
-    socket.on("send-user-data", handleSendUserData);
-    socket.on("receiving", handleReceiving);
-    socket.on("game-start", handleGameStart);
-    socket.on("game-already-started", handleGameAlreadyStarted);
-    socket.on("game-stop", handleGameStop);
-    socket.on("start-turn", handleStartTurn);
-    socket.on("receive-words", handleReceiveWords);
-    socket.on("word-len", handleWordLen);
-    socket.on("start-draw", handleStartDraw);
-    socket.on("end-turn", handleEndTurn);
-    socket.on("recieve-chat", handleRecieveChat);
-    socket.on("game-ended-leaderboard", handleGameEndedLeaderboard);
-    socket.on("close-leaderboard", () => {
+    newSocket.on("close-leaderboard", () => {
       setLeaderboardData(null);
     });
 
+    // 3. Cập nhật socket state
+    setSocket(newSocket);
+
+    // 4. Ngắt kết nối khi component unmount
     return () => {
-      socket.off("room-assigned", handleRoomAssigned);
-      socket.off("updated-players", handleUpdatedPlayers);
-      socket.off("send-user-data", handleSendUserData);
-      socket.off("receiving", handleReceiving);
-      socket.off("game-start", handleGameStart);
-      socket.off("game-already-started", handleGameAlreadyStarted);
-      socket.off("game-stop", handleGameStop);
-      socket.off("start-turn", handleStartTurn);
-      socket.off("receive-words", handleReceiveWords);
-      socket.off("word-len", handleWordLen);
-      socket.off("start-draw", handleStartDraw);
-      socket.off("end-turn", handleEndTurn);
-      socket.off("recieve-chat", handleRecieveChat);
-      socket.off("game-ended-leaderboard", handleGameEndedLeaderboard);
+      newSocket.disconnect();
     };
-  }, [socket]);
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -276,7 +241,7 @@ function PlayScreen() {
     context.stroke();
 
     const dataURL = canvas.toDataURL("image/png");
-    socket.emit("sending", dataURL);
+    if (socket) socket.emit("sending", dataURL);
     setLines((prev) => [...prev, { start: mousePosition, end: position, color, radius }]);
     setMousePosition(position);
   };
@@ -300,7 +265,7 @@ function PlayScreen() {
       context.stroke();
 
       const dataURL = canvas.toDataURL("image/png");
-      socket.emit("sending", dataURL);
+      if (socket) socket.emit("sending", dataURL);
       setStartPoint(null);
     }
   };
@@ -321,7 +286,7 @@ function PlayScreen() {
     context.putImageData(imageData, position.x - radius, position.y - radius);
 
     const dataURL = canvas.toDataURL("image/png");
-    socket.emit("sending", dataURL);
+    if (socket) socket.emit("sending", dataURL);
   };
 
   const fillCanvas = async () => {
@@ -331,7 +296,7 @@ function PlayScreen() {
     context.fillStyle = color;
     context.fillRect(0, 0, canvas.width, canvas.height);
     const dataURL = canvas.toDataURL("image/png");
-    socket.emit("sending", dataURL);
+    if (socket) socket.emit("sending", dataURL);
   };
 
   const clearCanvas = async () => {
@@ -341,7 +306,7 @@ function PlayScreen() {
     context.clearRect(0, 0, canvas.width, canvas.height);
     setLines([]);
     const dataURL = canvas.toDataURL("image/png");
-    socket.emit("sending", dataURL);
+    if (socket) socket.emit("sending", dataURL);
   };
 
   const clearCanvasAfterTurn = () => {
@@ -354,7 +319,7 @@ function PlayScreen() {
 
   const handleSubmitForm = (e) => {
     e.preventDefault();
-    if (!inputMessage) return;
+    if (!inputMessage || !socket) return;
     socket.emit("sending-chat", inputMessage.toLowerCase());
     setInputMessage("");
   };
@@ -362,7 +327,7 @@ function PlayScreen() {
   const handleWorSelect = (w) => {
     setShowWords(false);
     setSelectedWord(w);
-    socket.emit("word-select", w);
+    if (socket) socket.emit("word-select", w);
     setWords([]);
   };
 
