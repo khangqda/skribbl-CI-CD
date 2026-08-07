@@ -41,7 +41,10 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: node-app
-      
+      - name: Debug Azure Secrets
+        run: |
+            echo "CLIENT_ID=${{ secrets.AZURE_CLIENT_ID }}"
+            echo "TENANT_ID=${{ secrets.AZURE_TENANT_ID }}"
       - name: Login to Azure
         uses: azure/login@v2
         with:
