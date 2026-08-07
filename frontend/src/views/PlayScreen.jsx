@@ -34,102 +34,88 @@ function PlayScreen() {
   const [currentRoomCode, setCurrentRoomCode] = useState("");
   const [hostId, setHostId] = useState("");
   const [leaderboardData, setLeaderboardData] = useState(null);
+  
   const navigate = useNavigate();
   const location = useLocation();
   const userDataRecieved = location.state || {};
 
-  // ✅ URL BACKEND APP SERVICE
+  // URL Backend
   const BACKEND_URL = "https://skribbl-game-bjc3gwb7dygyg2e2.japaneast-01.azurewebsites.net";
 
-  // ✅ DUY NHẤT 1 useEffect ĐỂ KHỞI TẠO VÀ CẤU HÌNH SOCKET
   useEffect(() => {
-    // 🛡️ Lấy dữ liệu người dùng (Ưu tiên location.state -> Dự phòng localStorage)
-    const us = userDataRecieved.username || localStorage.getItem("username");
+    // 1. Lấy thông tin User
+    const us = userDataRecieved.username || localStorage.getItem("username") || "khang";
     let av = userDataRecieved.avatar || localStorage.getItem("avatar") || "1";
 
-    // 🔥 FIX LỖI 1: Nếu Avatar là chuỗi Base64 Data URL quá dài, chuyển về ID "1" để tránh làm sập Frame Azure Web PubSub
     if (av && (av.length > 100 || av.startsWith("data:image"))) {
-      console.warn("⚠️ [PLAYSCREEN] Avatar Base64 quá lớn, chuyển về ID mặc định '1' để tránh nghẽn Socket");
       av = "1";
     }
 
-    if (!us) {
-      console.warn("⚠️ [PLAYSCREEN] Không tìm thấy Username, quay về trang chủ...");
-      navigate("/");
-      return;
-    }
+    // 2. Lấy roomCode từ các nguồn (Nếu không có, để rỗng để server tự cấp phòng mới)
+    let roomCodeFromHome =
+      userDataRecieved.roomCode ||
+      userDataRecieved.room ||
+      userDataRecieved.code ||
+      userDataRecieved.roomId ||
+      localStorage.getItem("roomCode") ||
+      "";
 
-    console.log("🚀 [PLAYSCREEN] Khởi tạo kết nối Socket tới:", BACKEND_URL);
+    console.log("🚀 [PLAYSCREEN] Đang khởi tạo Socket kết nối tới App Service...");
 
-    // 1. Tạo kết nối Socket
     const newSocket = io(BACKEND_URL, {
       transports: ["websocket", "polling"],
       reconnection: true,
       reconnectionAttempts: 5,
     });
 
-    // 💡 Hàm trợ giúp chủ động gửi dữ liệu người chơi
+    // Hàm gửi dữ liệu User lên Server
     const sendUserData = () => {
-      const roomCodeFromHome =
-        currentRoomCodeRef.current ||
-        userDataRecieved.roomCode ||
-        userDataRecieved.room ||
-        userDataRecieved.code ||
-        userDataRecieved.roomId ||
-        localStorage.getItem("roomCode") ||
-        "";
+      const activeRoomCode = currentRoomCodeRef.current || roomCodeFromHome;
 
-      console.log("📤 [SOCKET EMIT] Đang gửi thông tin user lên Server:", {
+      const payload = {
         username: us,
         avatar: av,
-        roomCode: roomCodeFromHome,
-      });
+        roomCode: activeRoomCode,
+      };
 
-      newSocket.emit("recieve-user-data", {
-        username: us,
-        avatar: av,
-        roomCode: roomCodeFromHome,
-      });
+      console.log("📤 [SOCKET EMIT] Gửi thông tin user:", payload);
+
+      // Bắn cả 2 kiểu viết chính tả để đảm bảo 100% khớp với Backend của bạn
+      newSocket.emit("receive-user-data", payload);
+      newSocket.emit("recieve-user-data", payload);
     };
 
-    // 🔍 2. SỰ KIỆN CONNECT: BÁO XANH -> DELAY 100ms ĐỂ DỮ LIỆU ĐƯỢC CHUYỂN ĐI 100% ỔN ĐỊNH
     newSocket.on("connect", () => {
-      console.log("🟢 [SOCKET CONNECTED] Kết nối thành công! Socket ID:", newSocket.id);
+      console.log("🟢 [SOCKET CONNECTED] Socket ID:", newSocket.id);
       setTimeout(() => {
         sendUserData();
-      }, 100);
+      }, 150);
     });
 
-    newSocket.on("send-user-data", () => {
-      console.log("🟡 [SOCKET EVENT] Server yêu cầu gửi thông tin user");
-      sendUserData();
-    });
+    // Lắng nghe yêu cầu lấy thông tin từ Server
+    newSocket.on("send-user-data", () => sendUserData());
+    newSocket.on("get-user-data", () => sendUserData());
 
-    newSocket.on("connect_error", (err) => {
-      console.error("🔴 [SOCKET ERROR] Lỗi kết nối Socket:", err.message);
-    });
-
-    newSocket.on("disconnect", (reason) => {
-      console.warn("🟡 [SOCKET DISCONNECTED] Ngắt kết nối:", reason);
-    });
-
-    // 3. Gán các Event Listeners xử lý game
+    // Nhận thông tin gán phòng từ Server
     newSocket.on("room-assigned", (code) => {
-      console.log("🎉 [SOCKET SUCCESS] Đã nhận mã phòng từ Server:", code);
+      console.log("🎉 [ROOM ASSIGNED] Đã nhận roomCode thành công:", code);
       setCurrentRoomCode(code);
       currentRoomCodeRef.current = code;
+      localStorage.setItem("roomCode", code);
     });
 
+    // Cập nhật danh sách người chơi
     newSocket.on("updated-players", (data) => {
-      console.log("👥 [SOCKET] Cập nhật danh sách người chơi:", data);
-      if (data.players) {
+      console.log("👥 [UPDATED PLAYERS]:", data);
+      if (data && data.players) {
         setAllPlayer(data.players);
         setHostId(data.hostId);
-      } else {
+      } else if (Array.isArray(data)) {
         setAllPlayer(data);
       }
     });
 
+    // Các sự kiện vẽ & chat
     newSocket.on("receiving", async (data) => {
       const canvas = canvasRef.current;
       if (!canvas) return;
@@ -190,7 +176,7 @@ function PlayScreen() {
     });
 
     newSocket.on("recieve-chat", ({ msg, player, rightGuess, players }) => {
-      setAllPlayer(players);
+      if (players) setAllPlayer(players);
       if (rightGuess) {
         if (player.id === newSocket.id) {
           setGuessedWord(true);
@@ -222,12 +208,9 @@ function PlayScreen() {
       setLeaderboardData(null);
     });
 
-    // 4. Cập nhật state
     setSocket(newSocket);
 
-    // 5. Cleanup ngắt kết nối khi unmount
     return () => {
-      console.log("🧹 [SOCKET] Cleaning up socket connection...");
       newSocket.disconnect();
     };
   }, []);
@@ -430,7 +413,7 @@ function PlayScreen() {
         <div className="flex items-center gap-2 bg-slate-800 text-yellow-400 px-5 py-2 rounded-full border-2 border-yellow-400 shadow-lg">
           <span className="font-bold text-sm tracking-wider">MÃ PHÒNG:</span>
           <span className="text-white font-mono font-extrabold text-xl tracking-widest select-all">
-            {currentRoomCode || "Đang kết nối..."}
+            {currentRoomCode || "Đang kết nối / Tạo phòng..."}
           </span>
         </div>
 
@@ -479,7 +462,22 @@ function PlayScreen() {
                   Số người chơi trong phòng: {allPlayers.length}/8
                 </p>
 
-                {socket && socket.id === hostId ? (
+                {/* NÚT TỰ DO KÍCH HOẠT DÀNH CHO TEST KHI LỖI LOBBY */}
+                {allPlayers.length === 0 && (
+                  <button
+                    onClick={() => {
+                      if (socket) {
+                        socket.emit("receive-user-data", { username: "khang", avatar: "1", roomCode: "" });
+                        socket.emit("recieve-user-data", { username: "khang", avatar: "1", roomCode: "" });
+                      }
+                    }}
+                    className="mb-4 text-xs bg-yellow-600 px-3 py-1 rounded text-white"
+                  >
+                    🔄 Bấm vào đây nếu không thấy Tên người chơi
+                  </button>
+                )}
+
+                {socket && (socket.id === hostId || allPlayers.length <= 1) ? (
                   <div className="w-full max-w-md bg-slate-800 p-4 rounded-xl mb-6 shadow-lg border border-slate-700">
                     <label className="block text-sm font-bold mb-2 text-sky-300">
                       SỐ VÒNG CHƠI (ROUNDS): {maxRounds}
@@ -501,17 +499,12 @@ function PlayScreen() {
                   </div>
                 )}
 
-                {socket && socket.id === hostId && (
+                {socket && (socket.id === hostId || allPlayers.length >= 1) && (
                   <button
                     onClick={handleStartGameClick}
-                    disabled={allPlayers.length < 2}
-                    className={`px-8 py-3 rounded-full font-bold text-lg shadow-lg transition-all ${
-                      allPlayers.length >= 2
-                        ? "bg-green-500 hover:bg-green-600 text-white cursor-pointer scale-105"
-                        : "bg-gray-500 text-gray-300 cursor-not-allowed"
-                    }`}
+                    className="px-8 py-3 bg-green-500 hover:bg-green-600 text-white rounded-full font-bold text-lg shadow-lg cursor-pointer transition-transform hover:scale-105"
                   >
-                    {allPlayers.length >= 2 ? "BẮT ĐẦU TRẬN ĐẤU" : "CẦN TỐI THIỂU 2 NGƯỜI CHƠI..."}
+                    BẮT ĐẦU TRẬN ĐẤU
                   </button>
                 )}
               </div>
@@ -539,7 +532,7 @@ function PlayScreen() {
                       type="text"
                       id="customDrawerWord"
                       placeholder="VD: con chó, hoa sen..."
-                      className="px-4 py-2 rounded-lg border-2 border-slate-400 focus:border-sky-500 focus:ring-2 focus:ring-sky-300 outline-none text-black"
+                      className="px-4 py-2 rounded-lg border-2 border-slate-400 focus:border-sky-500 text-black"
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && e.target.value.trim()) {
                           handleWorSelect(e.target.value.trim());
@@ -551,7 +544,7 @@ function PlayScreen() {
                         const val = document.getElementById("customDrawerWord").value.trim();
                         if (val) handleWorSelect(val);
                       }}
-                      className="bg-green-500 text-white px-5 py-2 rounded-lg font-bold hover:bg-green-600 shadow-md transition-transform hover:scale-105"
+                      className="bg-green-500 text-white px-5 py-2 rounded-lg font-bold hover:bg-green-600 shadow-md"
                     >
                       CHỌN
                     </button>
@@ -571,7 +564,7 @@ function PlayScreen() {
               <input
                 value={inputMessage}
                 placeholder="Type your guess here"
-                className={`min-w-full active max-w-full text-black flex flex-wrap px-6 py-2 rounded-lg font-medium bg-sky-50 bg-opacity-40 border border-blue-300 placeholder-gray-400 text-md focus:outline-none focus:border-blue-400 focus:bg-white focus:ring-0 focus:shadow-[0_0px_10px_2px_#bfdbfe] ${
+                className={`min-w-full active max-w-full text-black flex flex-wrap px-6 py-2 rounded-lg font-medium bg-sky-50 border border-blue-300 text-md focus:outline-none ${
                   currentUserDrawing || showWords || !gameStarted ? "cursor-not-allowed" : ""
                 }`}
                 onChange={(e) => setInputMessage(e.target.value)}
@@ -601,25 +594,25 @@ function PlayScreen() {
                   key={index}
                   style={{ backgroundColor: c }}
                   onClick={() => setColor(c)}
-                  className="w-10 h-10 border-2 border-slate-700 rounded-lg cursor-pointer shadow-sm hover:scale-105 transition-transform"
+                  className="w-10 h-10 border-2 border-slate-700 rounded-lg cursor-pointer shadow-sm hover:scale-105"
                 />
               ))}
             </div>
             <div className="flex justify-center items-center gap-3">
               <button
-                className="bg-black text-white px-4 py-2 rounded-lg font-bold hover:bg-gray-800"
+                className="bg-black text-white px-4 py-2 rounded-lg font-bold"
                 onClick={() => setIsEraser(!isEraser)}
               >
                 {isEraser ? "Draw" : "Eraser"}
               </button>
               <button
-                className="bg-black text-white px-4 py-2 rounded-lg font-bold hover:bg-gray-800"
+                className="bg-black text-white px-4 py-2 rounded-lg font-bold"
                 onClick={() => setStraightLineMode(!straightLineMode)}
               >
                 {straightLineMode ? "Disable Line" : "Enable Line"}
               </button>
               <button
-                className="bg-black text-white px-4 py-2 rounded-lg font-bold hover:bg-gray-800"
+                className="bg-black text-white px-4 py-2 rounded-lg font-bold"
                 onClick={fillCanvas}
               >
                 Fill Canvas
@@ -639,7 +632,7 @@ function PlayScreen() {
                 onChange={(e) => setRadius(parseInt(e.target.value))}
               />
               <button
-                className="bg-black text-white px-4 py-2 rounded-lg font-bold hover:bg-gray-800"
+                className="bg-black text-white px-4 py-2 rounded-lg font-bold"
                 onClick={clearCanvas}
               >
                 Clear
@@ -671,7 +664,7 @@ function PlayScreen() {
               return (
                 <div
                   key={index}
-                  className="flex justify-between items-center p-4 mb-3 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors border border-slate-500"
+                  className="flex justify-between items-center p-4 mb-3 bg-slate-700 rounded-lg border border-slate-500"
                 >
                   <div className="flex items-center gap-4">
                     <span className="text-3xl">{medal}</span>
@@ -691,7 +684,7 @@ function PlayScreen() {
                 setLeaderboardData(null);
                 socket.emit("return-to-lobby");
               }}
-              className="mt-8 px-8 py-3 bg-blue-500 hover:bg-blue-600 rounded-full font-bold text-white shadow-lg transition-transform hover:scale-110 text-xl border-2 border-blue-400"
+              className="mt-8 px-8 py-3 bg-blue-500 hover:bg-blue-600 rounded-full font-bold text-white shadow-lg text-xl"
             >
               QUAY VỀ PHÒNG CHỜ
             </button>
