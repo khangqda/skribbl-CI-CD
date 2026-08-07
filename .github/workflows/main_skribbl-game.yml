@@ -20,15 +20,19 @@ jobs:
         with:
           node-version: '22.x'
 
-      # 📦 CHẠY NPM INSTALL ĐỂ TẢI ĐỦ THƯ VIỆN BẮT BUỘC
-      - name: Install dependencies
-        run: npm install
+      # 🎯 BƯỚC QUAN TRỌNG: Chui vào đúng folder backend để cài thư viện
+      - name: Install dependencies in backend
+        run: |
+          cd backend
+          npm install
 
-      # 🚀 Nén project đã bao gồm node_modules
-      - name: Zip project for fast deployment
-        run: zip -r release.zip . -x "*.git*"
+      # 🎯 Đóng gói CHỈ RIÊNG các file bên trong folder backend
+      - name: Zip backend directory
+        run: |
+          cd backend
+          zip -r ../release.zip . -x "*.git*"
 
-      - name: Upload artifact for deployment job
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: node-app
@@ -42,7 +46,7 @@ jobs:
       contents: read
 
     steps:
-      - name: Download artifact from build job
+      - name: Download artifact
         uses: actions/download-artifact@v4
         with:
           name: node-app
