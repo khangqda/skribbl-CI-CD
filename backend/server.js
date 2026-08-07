@@ -1,3 +1,5 @@
+const crypto = require("crypto");
+if (!globalThis.crypto) globalThis.crypto = crypto;
 const express = require("express");
 const cors = require("cors");
 const app = express();
@@ -16,7 +18,18 @@ dotenv.config();
 
 const server = http.createServer(app);
 
-// Khai báo biến toàn cục để các API bên dưới có thể dùng được
+// ✅ KHỞI TẠO SOCKET.IO ĐƯỢC ĐƯA LÊN ĐÂY ĐỂ TRÁNH LỖI KHỞI TẠO CHẬP CHỜN
+const io = new Server(server, {
+  pingTimeout: 60000,
+  cors: {
+    origin: "*", 
+    methods: ["GET", "POST"],
+  },
+  connectionStateRecovery: {},
+  transports: ["polling", "websocket"] 
+});
+
+// Khai báo biến toàn cục
 let pool;
 let redisClient;
 let blobServiceClient;
@@ -28,19 +41,16 @@ async function startServer() {
   try {
     console.log("⏳ Đang kết nối tới Azure Key Vault...");
     
-    // 2. RÚT MẬT KHẨU TỪ KEY VAULT
     const dbConnectionString = await getSecret("DB-CONNECTION-STRING");
     const redisConnectionString = await getSecret("REDIS-CONNECTION-STRING");
     const pubsubConnectionString = await getSecret("WEBPUBSUB-CONNECTION-STRING");
     
-    // Lưu ý: Nếu bác có đưa chuỗi ServiceBus/Blob vào Key Vault thì rút ở đây luôn. 
-    // Tạm thời tui dùng process.env cho 2 thằng này như code cũ của bác.
     const sbConnectionString = process.env.SERVICEBUS_CONNECTION_STRING;
     const blobConnectionString = process.env.AZURE_STORAGE_CONNECTION_STRING;
 
-    // 5. KHỞI TẠO POSTGRESQL VỚI SECRET TỪ KEY VAULT
+    // 1. KHỞI TẠO POSTGRESQL
     pool = new Pool({
-      connectionString: dbConnectionString, // 👈 ĐÃ ĐƯỢC THAY BẰNG SECRET KEY VAULT
+      connectionString: dbConnectionString,
       ssl: { rejectUnauthorized: false }
     });
 
@@ -65,15 +75,15 @@ async function startServer() {
       }
     });
 
-    // 3. KHỞI TẠO REDIS VỚI SECRET TỪ KEY VAULT (ĐÃ FIX LỖI INVALID URL)
+    // 2. KHỞI TẠO REDIS
     const formattedRedisUrl = `rediss://:${redisConnectionString}@skribbl-redis-managed.japaneast.redis.azure.net:10000`;
     redisClient = createClient({ url: formattedRedisUrl }); 
     
     redisClient.on("error", (err) => console.error("❌ Lỗi Redis:", err));
     redisClient.on("connect", () => console.log("⚡ Đã kết nối Azure Managed Redis từ Key Vault!"));
     await redisClient.connect();
-//nothing
-    // 4. KHỞI TẠO SERVICE BUS
+
+    // 3. KHỞI TẠO SERVICE BUS
     if (sbConnectionString) {
       const sbClient = new ServiceBusClient(sbConnectionString);
       const sender = sbClient.createSender("test-skribbl-queue");
@@ -85,11 +95,12 @@ async function startServer() {
       await sbClient.close();
     }
 
-    // 5. KHỞI TẠO BLOB STORAGE
+    // 4. KHỞI TẠO BLOB STORAGE
     if (blobConnectionString) {
       blobServiceClient = BlobServiceClient.fromConnectionString(blobConnectionString);
     }
-    // 10. KHỞI TẠO AZURE WEB PUBSUB SOCKET.IO
+
+    // 5. CẤU HÌNH AZURE WEB PUBSUB
     useAzureSocketIO(io, {
         hub: "skribblhub", 
         connectionString: pubsubConnectionString
@@ -104,7 +115,7 @@ async function startServer() {
 
   } catch (err) {
     console.error("❌ Không thể khởi động server do lỗi:", err);
-    process.exit(1); // Nếu lỗi Key Vault, sập server luôn không chạy tiếp
+    process.exit(1);
   }
 }
 
@@ -112,18 +123,8 @@ async function startServer() {
 startServer();
 
 // ==========================================
-// CÁC LOGIC API VÀ SOCKET.IO (GIỮ NGUYÊN)
+// CÁC LOGIC API VÀ SOCKET.IO
 // ==========================================
-
-const io = new Server(server, {
-  pingTimeout: 60000,
-  cors: {
-    origin: "*", 
-    methods: ["GET", "POST"],
-  },
-  connectionStateRecovery: {},
-  transports: ["polling", "websocket"] 
-});
 
 app.use(cors({ origin: true }));
 app.use(express.json({ limit: "10mb" }));
@@ -133,16 +134,13 @@ app.get("/", (req, res) => {
   res.send("🚀 Skribbl Game Backend API is running successfully!");
 });
 
-// Cache lịch sử trận đấu (Redis + Postgres)
 app.get("/api/history", async (req, res) => {
   try {
     const cacheKey = "match_history";
     const cached = await redisClient.get(cacheKey);
     if (cached) {
-      console.log("🚀 Lấy từ Redis siêu tốc!");
       return res.json({ source: "Redis Cache ⚡", data: JSON.parse(cached) });
     }
-    console.log("🐢 Trượt Cache, vào PostgreSQL lấy...");
     const result = await pool.query("SELECT * FROM match_history ORDER BY created_at DESC LIMIT 10");
     await redisClient.setEx(cacheKey, 60, JSON.stringify(result.rows)); 
     res.json({ source: "PostgreSQL 🐘", data: result.rows });
@@ -151,7 +149,6 @@ app.get("/api/history", async (req, res) => {
   }
 });
 
-// API Upload Blob
 app.post("/api/upload-drawing", async (req, res) => {
   try {
     const { imageBase64, roomCode, username } = req.body;
@@ -168,10 +165,8 @@ app.post("/api/upload-drawing", async (req, res) => {
     const blockBlobClient = containerClient.getBlockBlobClient(blobName);
 
     await blockBlobClient.uploadData(buffer, { blobHTTPHeaders: { blobContentType: "image/png" } });
-    console.log("Upload ảnh lên Azure Blob thành công:", blockBlobClient.url);
     return res.json({ success: true, imageUrl: blockBlobClient.url });
   } catch (error) {
-    console.error("Lỗi upload ảnh:", error);
     return res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -193,7 +188,6 @@ const startGame = (roomCode) => {
   const room = rooms[roomCode];
   if (!room) return;
   room.gameStarted = true;
-  console.log("Game started in room: " + roomCode);
   io.to(roomCode).emit("game-start", {});
   startTurn(roomCode);
 };
@@ -201,7 +195,6 @@ const startGame = (roomCode) => {
 const stopGame = (roomCode) => {
   const room = rooms[roomCode];
   if (!room) return;
-  console.log("Game stopped in room: " + roomCode);
   io.to(roomCode).emit("game-stop", {});
   room.drawerindex = 0;
   room.gameStarted = false;
@@ -243,14 +236,11 @@ const endTurn = (roomCode) => {
       room.currentRound++;
     }
     if (room.currentRound > room.maxRounds) {
-      console.log(`Phòng ${roomCode} đã hoàn thành ${room.maxRounds} vòng. Kết thúc game!`);
-      // Lưu DB
       room.players.forEach(player => {
         pool.query('INSERT INTO match_history(room_code, player_name, score) VALUES($1, $2, $3)', [roomCode, player.name, player.points], (err) => {
           if (err) console.error("❌ Lỗi lưu điểm:", err);
         });
       });
-      console.log("💾 Đã lưu lịch sử trận đấu lên Database Azure!");
       io.to(roomCode).emit("game-ended-leaderboard", room.players);
       stopGame(roomCode);
     } else {

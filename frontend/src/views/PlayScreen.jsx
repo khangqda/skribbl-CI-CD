@@ -38,10 +38,13 @@ function PlayScreen() {
   const location = useLocation();
   const userDataRecieved = location.state || {};
 
-  // ✅ ĐÃ ÉP CỨNG URL BACKEND THẲNG VÀO CODE (Không sợ lỗi process.env nữa)
+  // 🔴 THAY TÊN PUBSUB CỦA BÁC VÀO ĐÂY (Lấy ở trang Overview của Azure Web PubSub)
+  const PUBSUB_URL = "https://skribbl-pubsub.webpubsub.azure.com";
+  
+  // URL Backend App Service để gọi API Upload Ảnh
   const BACKEND_URL = "https://skribbl-game-bjc3gwb7dygyg2e2.japaneast-01.azurewebsites.net";
 
-  // 1. Khởi tạo Socket
+  // 1. Khởi tạo Socket qua Azure Web PubSub
   useEffect(() => {
     let us = localStorage.getItem("username");
     if (!us || !userDataRecieved.username || !userDataRecieved.avatar) {
@@ -49,8 +52,10 @@ function PlayScreen() {
       return;
     }
 
-    const newSocket = io.connect(BACKEND_URL, {
-      transports: ["polling", "websocket"],
+    // ✅ KẾT NỐI TỚI PUBSUB CHUẨN
+    const newSocket = io(PUBSUB_URL, {
+      path: "/clients/socketio/hubs/skribblhub",
+      transports: ["websocket", "polling"],
     });
     setSocket(newSocket);
 
@@ -376,7 +381,6 @@ function PlayScreen() {
     }
   };
 
-  // ✅ HÀM LƯU ẢNH BẮN TRỰC TIẾP SANG BACKEND AZURE
   const handleSaveDrawing = async () => {
     if (!canvasRef.current) return;
     const imageBase64 = canvasRef.current.toDataURL("image/png");
