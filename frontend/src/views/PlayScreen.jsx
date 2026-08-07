@@ -51,7 +51,7 @@ function PlayScreen() {
 
     // 1. Tạo kết nối Socket
     const newSocket = io(BACKEND_URL, {
-      transports: ["websocket", "polling"],
+      transports: ["websocket"],
     });
 
     // 2. Lắng nghe các sự kiện trực tiếp từ Server ngay khi vừa kết nối
