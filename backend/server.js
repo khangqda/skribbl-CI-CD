@@ -18,7 +18,7 @@ dotenv.config();
 
 const server = http.createServer(app);
 
-// ✅ KHỞI TẠO SOCKET.IO ĐƯỢC ĐƯA LÊN ĐÂY ĐỂ TRÁNH LỖI KHỞI TẠO CHẬP CHỜN
+// ✅ KHỞI TẠO SOCKET.IO
 const io = new Server(server, {
   pingTimeout: 60000,
   cors: {
@@ -187,6 +187,7 @@ function getRandomWordsServer(room) {
 const startGame = (roomCode) => {
   const room = rooms[roomCode];
   if (!room) return;
+  console.log(`🎮 [GAME START] Trận đấu tại phòng [${roomCode}] đã bắt đầu!`);
   room.gameStarted = true;
   io.to(roomCode).emit("game-start", {});
   startTurn(roomCode);
@@ -195,6 +196,7 @@ const startGame = (roomCode) => {
 const stopGame = (roomCode) => {
   const room = rooms[roomCode];
   if (!room) return;
+  console.log(`🛑 [GAME STOP] Trận đấu tại phòng [${roomCode}] đã dừng.`);
   io.to(roomCode).emit("game-stop", {});
   room.drawerindex = 0;
   room.gameStarted = false;
@@ -208,6 +210,7 @@ const startTurn = (roomCode) => {
   if (room.drawerindex >= room.players.length) room.drawerindex = 0;
   room.word = "";
   const currentDrawer = room.players[room.drawerindex];
+  console.log(`🎨 [TURN START] Lượt vẽ của người chơi: ${currentDrawer.name} (phòng ${roomCode})`);
   io.to(roomCode).emit("start-turn", currentDrawer);
   const wordsForDrawer = getRandomWordsServer(room);
   io.to(currentDrawer.id).emit("receive-words", wordsForDrawer);
@@ -236,10 +239,13 @@ const endTurn = (roomCode) => {
       room.currentRound++;
     }
     if (room.currentRound > room.maxRounds) {
+      console.log(`🏆 [GAME OVER] Phòng [${roomCode}] hoàn tất trận đấu. Đang lưu điểm vào Database...`);
       room.players.forEach(player => {
-        pool.query('INSERT INTO match_history(room_code, player_name, score) VALUES($1, $2, $3)', [roomCode, player.name, player.points], (err) => {
-          if (err) console.error("❌ Lỗi lưu điểm:", err);
-        });
+        if (pool) {
+          pool.query('INSERT INTO match_history(room_code, player_name, score) VALUES($1, $2, $3)', [roomCode, player.name, player.points], (err) => {
+            if (err) console.error("❌ Lỗi lưu điểm vào PostgreSQL:", err);
+          });
+        }
       });
       io.to(roomCode).emit("game-ended-leaderboard", room.players);
       stopGame(roomCode);
@@ -251,13 +257,24 @@ const endTurn = (roomCode) => {
   }
 };
 
+// ==========================================
+// LẮNG NGHE SỰ KIỆN KẾT NỐI TỪ CLIENT
+// ==========================================
 io.on("connection", (socket) => {
-  console.log("Connected to socket.io:", socket.id);
-  io.to(socket.id).emit("send-user-data", {});
+  console.log("🔌 Connected to socket.io:", socket.id);
+  
+  // Gửi thông báo yêu cầu dữ liệu người dùng
+  socket.emit("send-user-data", {});
 
-  socket.on("recieve-user-data", ({ username, avatar, roomCode }) => {
+  // Hàm dùng chung cho cả 'receive-user-data' và 'recieve-user-data'
+  const handleUserData = ({ username, avatar, roomCode }) => {
+    console.log(`📩 [NHẬN DATA USER] Socket ID: ${socket.id} | User: ${username} | Room gửi lên: "${roomCode}"`);
+
+    // Tự động tạo mã phòng 5 ký tự nếu roomCode rỗng
     let actualRoomCode = (roomCode && typeof roomCode === "string" && roomCode.trim() !== "")
-      ? roomCode.toUpperCase() : Math.random().toString(36).substring(2, 7).toUpperCase();
+      ? roomCode.trim().toUpperCase() 
+      : Math.random().toString(36).substring(2, 7).toUpperCase();
+
     socket.join(actualRoomCode);
     socket.roomCode = actualRoomCode;
 
@@ -267,22 +284,34 @@ io.on("connection", (socket) => {
         timeout: null, playerGuessedRightWord: [], gameStarted: false,
         currentRound: 1, maxRounds: 3, customWords: []
       };
+      console.log(`🎉 [TẠO PHÒNG MỚI] Mã phòng: ${actualRoomCode} | Host: ${username}`);
     }
+
     const currentRoom = rooms[actualRoomCode];
     const existingIndex = currentRoom.players.findIndex(p => p.id === socket.id);
     if (existingIndex === -1) {
-      currentRoom.players.push({ id: socket.id, name: username, points: 0, avatar: avatar });
+      currentRoom.players.push({ id: socket.id, name: username || "Guest", points: 0, avatar: avatar || "1" });
     } else {
-      currentRoom.players[existingIndex].name = username;
-      currentRoom.players[existingIndex].avatar = avatar;
+      currentRoom.players[existingIndex].name = username || "Guest";
+      currentRoom.players[existingIndex].avatar = avatar || "1";
     }
+
+    console.log(`✅ [PHÒNG ${actualRoomCode}] Danh sách hiện tại (${currentRoom.players.length} người):`, 
+      currentRoom.players.map(p => p.name).join(", "));
+
+    // BẮT BUỘC: Báo mã phòng và cập nhật danh sách người chơi
     socket.emit("room-assigned", actualRoomCode);
     io.to(actualRoomCode).emit("updated-players", { players: currentRoom.players, hostId: currentRoom.hostId });
-  });
+  };
+
+  // Đăng ký cả 2 tên event để tránh lệch chính tả với Client
+  socket.on("receive-user-data", handleUserData);
+  socket.on("recieve-user-data", handleUserData);
 
   socket.on("host-start-game", (config) => {
     const room = rooms[socket.roomCode];
-    if (room && room.hostId === socket.id && room.players.length >= 2 && !room.gameStarted) {
+    // Cho phép bắt đầu game từ >= 1 người chơi để dễ test
+    if (room && room.hostId === socket.id && room.players.length >= 1 && !room.gameStarted) {
       room.maxRounds = config?.maxRounds || 3;
       room.customWords = config?.customWords || [];
       room.currentRound = 1; 
@@ -332,12 +361,14 @@ io.on("connection", (socket) => {
     const room = rooms[socket.roomCode];
     if (room) {
       room.word = word;
+      console.log(`📝 [CHỌN TỪ] Phòng [${socket.roomCode}] chọn từ: "${word}"`);
       io.to(socket.roomCode).emit("word-len", word.length);
       startDraw(socket.roomCode);
     }
   });
 
-  socket.on("disconnect", () => {
+  socket.on("disconnect", (reason) => {
+    console.log(`❌ Disconnected: ${socket.id} | Lý do: ${reason}`);
     if (socket.roomCode && rooms[socket.roomCode]) {
       const room = rooms[socket.roomCode];
       const index = room.players.findIndex(p => p.id === socket.id);
@@ -345,10 +376,11 @@ io.on("connection", (socket) => {
         room.players.splice(index, 1);
         if (room.hostId === socket.id && room.players.length > 0) room.hostId = room.players[0].id;
         io.to(socket.roomCode).emit("updated-players", { players: room.players, hostId: room.hostId });
-        if (room.players.length <= 1) stopGame(socket.roomCode);
+        if (room.players.length <= 1 && room.gameStarted) stopGame(socket.roomCode);
         if (room.players.length === 0) {
           if (room.timeout) clearTimeout(room.timeout);
           delete rooms[socket.roomCode];
+          console.log(`🧹 [XÓA PHÒNG] Phòng [${socket.roomCode}] không còn ai nên đã bị giải phóng.`);
         }
       }
     }
