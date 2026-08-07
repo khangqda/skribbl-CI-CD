@@ -266,51 +266,56 @@ io.on("connection", (socket) => {
   // Gửi thông báo yêu cầu dữ liệu người dùng
   socket.emit("send-user-data", {});
 
-  // Hàm dùng chung cho cả 'receive-user-data' và 'recieve-user-data'
-  const handleUserData = ({ username, avatar, roomCode }) => {
-    console.log(`📩 [NHẬN DATA USER] Socket ID: ${socket.id} | User: ${username} | Room gửi lên: "${roomCode}"`);
+  // ✅ ĐÃ SỬA THÀNH async ĐỂ TƯƠNG THÍCH VỚI AZURE WEB PUBSUB
+  const handleUserData = async ({ username, avatar, roomCode }) => {
+    try {
+      console.log(`📩 [NHẬN DATA USER] Socket ID: ${socket.id} | User: ${username} | Room gửi lên: "${roomCode}"`);
 
-    // Tự động tạo mã phòng 5 ký tự nếu roomCode rỗng
-    let actualRoomCode = (roomCode && typeof roomCode === "string" && roomCode.trim() !== "")
-      ? roomCode.trim().toUpperCase() 
-      : Math.random().toString(36).substring(2, 7).toUpperCase();
+      let actualRoomCode = (roomCode && typeof roomCode === "string" && roomCode.trim() !== "")
+        ? roomCode.trim().toUpperCase() 
+        : Math.random().toString(36).substring(2, 7).toUpperCase();
 
-    socket.join(actualRoomCode);
-    socket.roomCode = actualRoomCode;
+      // ⚡ BẮT BUỘC ĐỜI AWAIT ĐỂ AZURE PUBSUB THÊM USER VÀO ROOM XONG
+      await socket.join(actualRoomCode);
+      socket.roomCode = actualRoomCode;
 
-    if (!rooms[actualRoomCode]) {
-      rooms[actualRoomCode] = { 
-        hostId: socket.id, players: [], drawerindex: 0, word: "", 
-        timeout: null, playerGuessedRightWord: [], gameStarted: false,
-        currentRound: 1, maxRounds: 3, customWords: []
-      };
-      console.log(`🎉 [TẠO PHÒNG MỚI] Mã phòng: ${actualRoomCode} | Host: ${username}`);
+      if (!rooms[actualRoomCode]) {
+        rooms[actualRoomCode] = { 
+          hostId: socket.id, players: [], drawerindex: 0, word: "", 
+          timeout: null, playerGuessedRightWord: [], gameStarted: false,
+          currentRound: 1, maxRounds: 3, customWords: []
+        };
+        console.log(`🎉 [TẠO PHÒNG MỚI] Mã phòng: ${actualRoomCode} | Host: ${username}`);
+      }
+
+      const currentRoom = rooms[actualRoomCode];
+      const existingIndex = currentRoom.players.findIndex(p => p.id === socket.id);
+      if (existingIndex === -1) {
+        currentRoom.players.push({ id: socket.id, name: username || "Guest", points: 0, avatar: avatar || "1" });
+      } else {
+        currentRoom.players[existingIndex].name = username || "Guest";
+        currentRoom.players[existingIndex].avatar = avatar || "1";
+      }
+
+      console.log(`✅ [PHÒNG ${actualRoomCode}] Danh sách hiện tại (${currentRoom.players.length} người):`, 
+        currentRoom.players.map(p => p.name).join(", "));
+
+      // Báo mã phòng cho Client
+      socket.emit("room-assigned", actualRoomCode);
+      
+      // Broadcast danh sách người chơi (Azure PubSub giờ đã biết User nằm trong Room nên broadcast sẽ tới nơi)
+      io.to(actualRoomCode).emit("updated-players", { players: currentRoom.players, hostId: currentRoom.hostId });
+    } catch (err) {
+      console.error("❌ Lỗi join room trên Azure Web PubSub:", err);
     }
-
-    const currentRoom = rooms[actualRoomCode];
-    const existingIndex = currentRoom.players.findIndex(p => p.id === socket.id);
-    if (existingIndex === -1) {
-      currentRoom.players.push({ id: socket.id, name: username || "Guest", points: 0, avatar: avatar || "1" });
-    } else {
-      currentRoom.players[existingIndex].name = username || "Guest";
-      currentRoom.players[existingIndex].avatar = avatar || "1";
-    }
-
-    console.log(`✅ [PHÒNG ${actualRoomCode}] Danh sách hiện tại (${currentRoom.players.length} người):`, 
-      currentRoom.players.map(p => p.name).join(", "));
-
-    // BẮT BUỘC: Báo mã phòng và cập nhật danh sách người chơi
-    socket.emit("room-assigned", actualRoomCode);
-    io.to(actualRoomCode).emit("updated-players", { players: currentRoom.players, hostId: currentRoom.hostId });
   };
 
-  // Đăng ký cả 2 tên event để tránh lệch chính tả với Client
+  // Đăng ký cả 2 tên event
   socket.on("receive-user-data", handleUserData);
   socket.on("recieve-user-data", handleUserData);
 
   socket.on("host-start-game", (config) => {
     const room = rooms[socket.roomCode];
-    // Cho phép bắt đầu game từ >= 1 người chơi để dễ test
     if (room && room.hostId === socket.id && room.players.length >= 1 && !room.gameStarted) {
       room.maxRounds = config?.maxRounds || 3;
       room.customWords = config?.customWords || [];
