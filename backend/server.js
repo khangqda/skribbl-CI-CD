@@ -5,7 +5,6 @@ const cors = require("cors");
 const app = express();
 const http = require("http");
 const { Server } = require("socket.io");
-const { useAzureSocketIO } = require("@azure/web-pubsub-socket.io");
 const path = require("path");
 
 const { getSecret } = require("./keyvault");
@@ -18,7 +17,7 @@ dotenv.config();
 
 const server = http.createServer(app);
 
-// ✅ KHỞI TẠO SOCKET.IO
+// ✅ KHỞI TẠO SOCKET.IO NATIVE (NHAU VỚI AZURE APP SERVICE LINUX TRỰC TIẾP)
 const io = new Server(server, {
   pingTimeout: 60000,
   cors: {
@@ -43,7 +42,6 @@ async function startServer() {
     
     const dbConnectionString = await getSecret("DB-CONNECTION-STRING");
     const redisConnectionString = await getSecret("REDIS-CONNECTION-STRING");
-    const pubsubConnectionString = await getSecret("WEBPUBSUB-CONNECTION-STRING");
     
     const sbConnectionString = process.env.SERVICEBUS_CONNECTION_STRING;
     const blobConnectionString = process.env.AZURE_STORAGE_CONNECTION_STRING;
@@ -100,14 +98,7 @@ async function startServer() {
       blobServiceClient = BlobServiceClient.fromConnectionString(blobConnectionString);
     }
 
-    // 5. CẤU HÌNH AZURE WEB PUBSUB
-    useAzureSocketIO(io, {
-        hub: "skribblhub", 
-        connectionString: pubsubConnectionString
-    });
-    console.log("☁️ Đã chuyển giao quyền lực WebSocket cho Azure Web PubSub!");
-
-    // 6. CHẠY SERVER LẮNG NGHE PORT
+    // 5. CHẠY SERVER LẮNG NGHE PORT
     const port_no = process.env.PORT || 3001;
     server.listen(port_no, () => {
       console.log(`🚀 Server listening on port ${port_no} với cấu hình từ Key Vault!`);
@@ -263,51 +254,46 @@ const endTurn = (roomCode) => {
 io.on("connection", (socket) => {
   console.log("🔌 Connected to socket.io:", socket.id);
   
-  // Gửi thông báo yêu cầu dữ liệu người dùng
+  // Gửi thông báo yêu cầu dữ liệu người dùng ngay khi vừa kết nối
   socket.emit("send-user-data", {});
 
-  // ✅ ĐÃ SỬA THÀNH async ĐỂ TƯƠNG THÍCH VỚI AZURE WEB PUBSUB
-  const handleUserData = async ({ username, avatar, roomCode }) => {
-    try {
-      console.log(`📩 [NHẬN DATA USER] Socket ID: ${socket.id} | User: ${username} | Room gửi lên: "${roomCode}"`);
+  const handleUserData = ({ username, avatar, roomCode }) => {
+    console.log(`📩 [NHẬN DATA USER] Socket ID: ${socket.id} | User: ${username} | Room gửi lên: "${roomCode}"`);
 
-      let actualRoomCode = (roomCode && typeof roomCode === "string" && roomCode.trim() !== "")
-        ? roomCode.trim().toUpperCase() 
-        : Math.random().toString(36).substring(2, 7).toUpperCase();
+    let actualRoomCode = (roomCode && typeof roomCode === "string" && roomCode.trim() !== "")
+      ? roomCode.trim().toUpperCase() 
+      : Math.random().toString(36).substring(2, 7).toUpperCase();
 
-      // ⚡ BẮT BUỘC ĐỜI AWAIT ĐỂ AZURE PUBSUB THÊM USER VÀO ROOM XONG
-      await socket.join(actualRoomCode);
-      socket.roomCode = actualRoomCode;
+    // Socket.io Native join room tức thì (đồng bộ)
+    socket.join(actualRoomCode);
+    socket.roomCode = actualRoomCode;
 
-      if (!rooms[actualRoomCode]) {
-        rooms[actualRoomCode] = { 
-          hostId: socket.id, players: [], drawerindex: 0, word: "", 
-          timeout: null, playerGuessedRightWord: [], gameStarted: false,
-          currentRound: 1, maxRounds: 3, customWords: []
-        };
-        console.log(`🎉 [TẠO PHÒNG MỚI] Mã phòng: ${actualRoomCode} | Host: ${username}`);
-      }
-
-      const currentRoom = rooms[actualRoomCode];
-      const existingIndex = currentRoom.players.findIndex(p => p.id === socket.id);
-      if (existingIndex === -1) {
-        currentRoom.players.push({ id: socket.id, name: username || "Guest", points: 0, avatar: avatar || "1" });
-      } else {
-        currentRoom.players[existingIndex].name = username || "Guest";
-        currentRoom.players[existingIndex].avatar = avatar || "1";
-      }
-
-      console.log(`✅ [PHÒNG ${actualRoomCode}] Danh sách hiện tại (${currentRoom.players.length} người):`, 
-        currentRoom.players.map(p => p.name).join(", "));
-
-      // Báo mã phòng cho Client
-      socket.emit("room-assigned", actualRoomCode);
-      
-      // Broadcast danh sách người chơi (Azure PubSub giờ đã biết User nằm trong Room nên broadcast sẽ tới nơi)
-      io.to(actualRoomCode).emit("updated-players", { players: currentRoom.players, hostId: currentRoom.hostId });
-    } catch (err) {
-      console.error("❌ Lỗi join room trên Azure Web PubSub:", err);
+    if (!rooms[actualRoomCode]) {
+      rooms[actualRoomCode] = { 
+        hostId: socket.id, players: [], drawerindex: 0, word: "", 
+        timeout: null, playerGuessedRightWord: [], gameStarted: false,
+        currentRound: 1, maxRounds: 3, customWords: []
+      };
+      console.log(`🎉 [TẠO PHÒNG MỚI] Mã phòng: ${actualRoomCode} | Host: ${username}`);
     }
+
+    const currentRoom = rooms[actualRoomCode];
+    const existingIndex = currentRoom.players.findIndex(p => p.id === socket.id);
+    if (existingIndex === -1) {
+      currentRoom.players.push({ id: socket.id, name: username || "Guest", points: 0, avatar: avatar || "1" });
+    } else {
+      currentRoom.players[existingIndex].name = username || "Guest";
+      currentRoom.players[existingIndex].avatar = avatar || "1";
+    }
+
+    console.log(`✅ [PHÒNG ${actualRoomCode}] Danh sách hiện tại (${currentRoom.players.length} người):`, 
+      currentRoom.players.map(p => p.name).join(", "));
+
+    // Báo mã phòng cho Client
+    socket.emit("room-assigned", actualRoomCode);
+    
+    // Broadcast danh sách người chơi ngay lập tức
+    io.to(actualRoomCode).emit("updated-players", { players: currentRoom.players, hostId: currentRoom.hostId });
   };
 
   // Đăng ký cả 2 tên event
