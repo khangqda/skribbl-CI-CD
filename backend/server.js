@@ -72,7 +72,7 @@ async function startServer() {
     redisClient.on("error", (err) => console.error("❌ Lỗi Redis:", err));
     redisClient.on("connect", () => console.log("⚡ Đã kết nối Azure Managed Redis từ Key Vault!"));
     await redisClient.connect();
-
+//nothing
     // 4. KHỞI TẠO SERVICE BUS
     if (sbConnectionString) {
       const sbClient = new ServiceBusClient(sbConnectionString);
