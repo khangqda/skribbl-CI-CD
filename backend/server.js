@@ -17,7 +17,7 @@ dotenv.config();
 
 const server = http.createServer(app);
 
-// ✅ KHỞI TẠO SOCKET.IO NATIVE (NHAU VỚI AZURE APP SERVICE LINUX TRỰC TIẾP)
+// ✅ KHỞI TẠO SOCKET.IO NATIVE
 const io = new Server(server, {
   pingTimeout: 60000,
   cors: {
@@ -117,7 +117,18 @@ startServer();
 // CÁC LOGIC API VÀ SOCKET.IO
 // ==========================================
 
-app.use(cors({ origin: true }));
+// 🛠️ XỬ LÝ CORS & PREFLIGHT (OPTIONS) CHO CẢ API VÀ UPLOAD ẢNH BASE64
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+  
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ limit: "10mb", extended: true }));
 
@@ -254,17 +265,15 @@ const endTurn = (roomCode) => {
 io.on("connection", (socket) => {
   console.log("🔌 Connected to socket.io:", socket.id);
   
-  // Gửi thông báo yêu cầu dữ liệu người dùng ngay khi vừa kết nối
   socket.emit("send-user-data", {});
 
   const handleUserData = ({ username, avatar, roomCode }) => {
-    console.log(`📩 [NHẬN DATA USER] Socket ID: ${socket.id} | User: ${username} | Room gửi lên: "${roomCode}"`);
+    console.log(`[NHẬN DATA USER] Socket ID: ${socket.id} | User: ${username} | Room gửi lên: "${roomCode}"`);
 
     let actualRoomCode = (roomCode && typeof roomCode === "string" && roomCode.trim() !== "")
       ? roomCode.trim().toUpperCase() 
       : Math.random().toString(36).substring(2, 7).toUpperCase();
 
-    // Socket.io Native join room tức thì (đồng bộ)
     socket.join(actualRoomCode);
     socket.roomCode = actualRoomCode;
 
@@ -274,7 +283,7 @@ io.on("connection", (socket) => {
         timeout: null, playerGuessedRightWord: [], gameStarted: false,
         currentRound: 1, maxRounds: 3, customWords: []
       };
-      console.log(`🎉 [TẠO PHÒNG MỚI] Mã phòng: ${actualRoomCode} | Host: ${username}`);
+      console.log(`[TẠO PHÒNG MỚI] Mã phòng: ${actualRoomCode} | Host: ${username}`);
     }
 
     const currentRoom = rooms[actualRoomCode];
@@ -289,14 +298,10 @@ io.on("connection", (socket) => {
     console.log(`✅ [PHÒNG ${actualRoomCode}] Danh sách hiện tại (${currentRoom.players.length} người):`, 
       currentRoom.players.map(p => p.name).join(", "));
 
-    // Báo mã phòng cho Client
     socket.emit("room-assigned", actualRoomCode);
-    
-    // Broadcast danh sách người chơi ngay lập tức
     io.to(actualRoomCode).emit("updated-players", { players: currentRoom.players, hostId: currentRoom.hostId });
   };
 
-  // Đăng ký cả 2 tên event
   socket.on("receive-user-data", handleUserData);
   socket.on("recieve-user-data", handleUserData);
 
@@ -371,7 +376,7 @@ io.on("connection", (socket) => {
         if (room.players.length === 0) {
           if (room.timeout) clearTimeout(room.timeout);
           delete rooms[socket.roomCode];
-          console.log(`🧹 [XÓA PHÒNG] Phòng [${socket.roomCode}] không còn ai nên đã bị giải phóng.`);
+          console.log(`[XÓA PHÒNG] Phòng [${socket.roomCode}] không còn ai nên đã bị giải phóng.`);
         }
       }
     }
