@@ -225,7 +225,8 @@ const startDraw = (roomCode) => {
   if (!room || room.players.length === 0) return;
   io.to(roomCode).emit("start-draw", room.players[room.drawerindex]);
   if (room.timeout) clearTimeout(room.timeout);
-  room.timeout = setTimeout(() => endTurn(roomCode), 60000);
+  // Thay đổi 60000 thành 120000 (2 phút)
+  room.timeout = setTimeout(() => endTurn(roomCode), 120000);
 };
 
 const endTurn = (roomCode) => {
@@ -309,7 +310,8 @@ io.on("connection", (socket) => {
 
   socket.on("host-start-game", (config) => {
     const room = rooms[socket.roomCode];
-    if (room && room.hostId === socket.id && room.players.length >= 1 && !room.gameStarted) {
+    // Thay đổi điều kiện room.players.length >= 1 thành room.players.length >= 2
+    if (room && room.hostId === socket.id && room.players.length >= 2 && !room.gameStarted) {
       room.maxRounds = config?.maxRounds || 3;
       room.customWords = config?.customWords || [];
       room.currentRound = 1; 

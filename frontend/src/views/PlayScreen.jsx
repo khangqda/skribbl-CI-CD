@@ -477,7 +477,7 @@ function PlayScreen() {
                   </button>
                 )}
 
-                {socket && (socket.id === hostId || allPlayers.length <= 1) ? (
+                {socket && socket.id === hostId && (
                   <div className="w-full max-w-md bg-slate-800 p-4 rounded-xl mb-6 shadow-lg border border-slate-700">
                     <label className="block text-sm font-bold mb-2 text-sky-300">
                       SỐ VÒNG CHƠI (ROUNDS): {maxRounds}
@@ -491,7 +491,19 @@ function PlayScreen() {
                       className="w-full mb-4 accent-sky-500"
                     />
                   </div>
-                ) : (
+                )}
+
+                {/* Kiểm tra: Nếu là chủ phòng nhưng chưa đủ 2 người */}
+                {socket && socket.id === hostId && allPlayers.length < 2 && (
+                  <div className="w-full max-w-md bg-slate-800 p-6 rounded-xl mb-6 text-center border border-slate-700">
+                    <p className="text-xl animate-pulse text-yellow-400 font-bold">
+                      Cần ít nhất 2 người chơi để bắt đầu!
+                    </p>
+                  </div>
+                )}
+
+                {/* Kiểm tra: Nếu không phải chủ phòng */}
+                {socket && socket.id !== hostId && (
                   <div className="w-full max-w-md bg-slate-800 p-6 rounded-xl mb-6 text-center border border-slate-700">
                     <p className="text-xl animate-pulse text-sky-300 font-bold">
                       Đang chờ Chủ phòng cài đặt trận đấu...
@@ -499,7 +511,8 @@ function PlayScreen() {
                   </div>
                 )}
 
-                {socket && (socket.id === hostId || allPlayers.length >= 1) && (
+                {/* Nút bắt đầu: Chỉ hiện cho chủ phòng khi ĐÃ ĐỦ 2 người trở lên */}
+                {socket && socket.id === hostId && allPlayers.length >= 2 && (
                   <button
                     onClick={handleStartGameClick}
                     className="px-8 py-3 bg-green-500 hover:bg-green-600 text-white rounded-full font-bold text-lg shadow-lg cursor-pointer transition-transform hover:scale-105"
