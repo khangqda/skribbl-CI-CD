@@ -1,3 +1,5 @@
+const appInsights = require("applicationinsights");
+appInsights.setup().start(); // Tự động đọc cấu hình trên Azure
 const crypto = require("crypto");
 if (!globalThis.crypto) globalThis.crypto = crypto;
 const express = require("express");
